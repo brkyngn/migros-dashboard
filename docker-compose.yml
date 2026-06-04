@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # Backend API Server
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: migros-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - MIGROS_USERNAME=${MIGROS_USERNAME}
+      - MIGROS_PASSWORD=${MIGROS_PASSWORD}
+      - SATICI_ID=${SATICI_ID}
+      - DB_PATH=/app/data/migros-data.db
+    volumes:
+      - ./data:/app/data
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - agent
+
+  # Data Collection Agent
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: migros-agent
+    environment:
+      - NODE_ENV=production
+      - MIGROS_USERNAME=${MIGROS_USERNAME}
+      - MIGROS_PASSWORD=${MIGROS_PASSWORD}
+      - SATICI_ID=${SATICI_ID}
+      - DB_PATH=/app/data/migros-data.db
+    volumes:
+      - ./data:/app/data
+    restart: always
+    depends_on:
+      - db
+
+  # SQLite Database (optional - for data persistence)
+  db:
+    image: sqlite:latest
+    container_name: migros-db
+    volumes:
+      - ./data:/data
+    restart: always
+
+volumes:
+  data:
+    driver: local
+
+networks:
+  default:
+    name: migros-network

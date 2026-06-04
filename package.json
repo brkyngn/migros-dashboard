@@ -1,0 +1,33 @@
+{
+  "name": "migros-b2b-system",
+  "version": "1.0.0",
+  "description": "Migros B2B Reporting and Analytics System",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "npm --prefix backend start",
+    "dev": "concurrently \"npm --prefix backend run dev\" \"npm --prefix agent run dev\"",
+    "backend": "npm --prefix backend start",
+    "agent": "npm --prefix agent start",
+    "install-all": "npm --prefix backend install && npm --prefix agent install",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f"
+  },
+  "keywords": [
+    "migros",
+    "b2b",
+    "reporting",
+    "analytics",
+    "sales"
+  ],
+  "author": "Kittycady",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  }
+}
