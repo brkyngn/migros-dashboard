@@ -4,7 +4,7 @@
   "description": "Migros B2B Reporting and Analytics System",
   "main": "backend/server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "concurrently \"node server.js\" \"node agent.js\"",
     "agent": "node agent.js",
     "docker:build": "docker-compose build",
     "docker:up": "docker-compose up -d",
@@ -24,9 +24,7 @@
     "express": "^4.18.2",
     "sqlite3": "^5.1.6",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1"
-  },
-  "devDependencies": {
+    "dotenv": "^16.3.1",
     "concurrently": "^8.2.0"
   },
   "engines": {
