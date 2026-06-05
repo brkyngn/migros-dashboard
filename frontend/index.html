@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Migros B2B Rapor Yönetimi</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #f97316 0%, #ef4444 50%, #ec4899 100%);
+            min-height: 100vh;
+        }
+        .container { max-width: 1800px; margin: 0 auto; padding: 2rem; }
+        .login-box { background: white; border-radius: 1rem; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); padding: 2rem; max-width: 450px; margin: 10vh auto; }
+        .login-title { text-align: center; font-size: 2.5rem; font-weight: bold; color: #1f2937; margin-bottom: 0.5rem; }
+        .login-subtitle { text-align: center; color: #6b7280; margin-bottom: 2rem; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.5rem; }
+        input, select { width: 100%; padding: 0.75rem 1rem; border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 1rem; }
+        input:focus, select:focus { outline: none; border-color: #f97316; box-shadow: 0 0 0 3px rgba(249,115,22,0.1); }
+        button { background: linear-gradient(to right, #f97316, #ef4444); color: white; padding: 0.75rem 1.5rem; border: none; border-radius: 0.5rem; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.2s; width: 100%; }
+        button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.2); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .alert { padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; font-size: 0.875rem; }
+        .alert-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+        .alert-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #065f46; }
+        .alert-warning { background: #fef3c7; border: 2px solid #f59e0b; color: #92400e; }
+        .dashboard { display: none; }
+        .dashboard.active { display: block; }
+        .header { background: linear-gradient(to right, #f97316, #ef4444); color: white; padding: 1.5rem; border-radius: 1rem; margin-bottom: 2rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .header-content { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; }
+        .header h1 { font-size: 1.875rem; }
+        .tabs { background: white; border-radius: 0.75rem; padding: 0.5rem; margin-bottom: 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .tab { padding: 0.75rem 0.5rem; border: none; border-radius: 0.5rem; font-weight: 600; cursor: pointer; background: #f3f4f6; color: #374151; transition: all 0.2s; font-size: 0.75rem; }
+        .tab.active { background: linear-gradient(to right, #f97316, #ef4444); color: white; }
+        .card { background: white; border-radius: 0.75rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+        .table-container { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        thead { background: linear-gradient(to right, #f97316, #ef4444); color: white; }
+        th { padding: 0.75rem 0.5rem; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 0.7rem; }
+        td { padding: 0.75rem 0.5rem; border-bottom: 1px solid #e5e7eb; }
+        tbody tr:nth-child(even) { background: #f9fafb; }
+        tbody tr:hover { background: #fef3f2; }
+        .loading { text-align: center; padding: 2rem; color: #6b7280; }
+        .spinner { display: inline-block; width: 2rem; height: 2rem; border: 3px solid rgba(249,115,22,0.3); border-radius: 50%; border-top-color: #f97316; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .action-buttons { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+        .btn-success { background: #10b981; }
+    </style>
+</head>
+<body>
+    <div id="loginScreen">
+        <div class="login-box">
+            <h1 class="login-title">📊 Migros B2B</h1>
+            <p class="login-subtitle">Rapor Yönetim Sistemi</p>
+            <div id="loginError" class="alert alert-error" style="display: none;"></div>
+            <div class="alert alert-warning">
+                <strong>⚠️ Önemli!</strong>
+                <p style="margin: 0.5rem 0 0 0;">Proxy çalışıyor: <code style="background: #fff; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-family: monospace; font-size: 0.7rem;">node proxy-restful.js</code></p>
+            </div>
+            <div class="form-group">
+                <label>Kullanıcı Adı</label>
+                <input type="text" id="username" placeholder="B2B kullanıcı adınız">
+            </div>
+            <div class="form-group">
+                <label>Şifre</label>
+                <input type="password" id="password" placeholder="B2B şifreniz">
+            </div>
+            <button id="loginBtn">🔐 Giriş Yap</button>
+        </div>
+    </div>
+
+    <div id="dashboardScreen" class="dashboard">
+        <div class="container">
+            <div class="header">
+                <div class="header-content">
+                    <div>
+                        <h1>📊 Migros B2B Rapor Yönetimi</h1>
+                        <p id="welcomeText">Hoş geldiniz</p>
+                    </div>
+                    <button id="logoutBtn">🚪 Çıkış Yap</button>
+                </div>
+            </div>
+
+            <div class="tabs">
+                <button class="tab active" data-tab="isleticiSatis">🏪 İşletici</button>
+                <button class="tab" data-tab="stok">📦 Stok</button>
+                <button class="tab" data-tab="teslimNoktasi">📍 Teslim</button>
+                <button class="tab" data-tab="eticaret">🛒 E-Ticaret</button>
+                <button class="tab" data-tab="gunlukSatis">📈 Günlük</button>
+                <button class="tab" data-tab="bulunurlukV6">🔍 Bulunurluk v6</button>
+                <button class="tab" data-tab="bulunurluk">🔎 Bulunurluk</button>
+                <button class="tab" data-tab="portfoy">💼 Portföy</button>
+                <button class="tab" data-tab="magazaUrun">🏬 Mağaza Ürün</button>
+                <button class="tab" data-tab="ekstre">💰 Ekstre</button>
+                <button class="tab" data-tab="odeme">💳 Ödeme</button>
+                <button class="tab" data-tab="girisHareketleri">📥 Giriş</button>
+                <button class="tab" data-tab="saticiUrun">🏷️ Satıcı Ürün</button>
+                <button class="tab" data-tab="planogram">📐 Planogram</button>
+                <button class="tab" data-tab="reyonGoruntuleme">👁️ Reyon</button>
+            </div>
+
+            <div class="card">
+                <h2 style="margin-bottom: 1rem;">🔍 Filtreler</h2>
+                <div class="filters" id="filters"></div>
+                <div class="action-buttons">
+                    <button id="fetchBtn">🔍 Raporu Getir</button>
+                    <button id="exportBtn" class="btn-success" style="display: none;">📥 CSV İndir</button>
+                </div>
+            </div>
+
+            <div id="alertContainer"></div>
+            <div id="reportContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        const PROXY_URL = '';
+        let token = '', connectionCodeRaw = '', currentData = null, username = '', activeTab = 'isleticiSatis';
+
+        async function sha1(str) {
+            const buffer = new TextEncoder().encode(str);
+            const hashBuffer = await crypto.subtle.digest('SHA-1', buffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        document.getElementById('loginBtn').addEventListener('click', async () => {
+            username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const loginError = document.getElementById('loginError');
+            const loginBtn = document.getElementById('loginBtn');
+
+            if (!username || !password) {
+                loginError.textContent = '⚠️ Kullanıcı adı ve şifre gerekli!';
+                loginError.style.display = 'block';
+                return;
+            }
+
+            loginBtn.disabled = true;
+            loginBtn.textContent = '🔄 Bağlanılıyor...';
+            loginError.style.display = 'none';
+
+            try {
+                const response = await fetch(`${PROXY_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+                if (data.token) {
+                    token = data.token;
+                    connectionCodeRaw = data.connectionCode || '';
+                    document.getElementById('loginScreen').style.display = 'none';
+                    document.getElementById('dashboardScreen').classList.add('active');
+                    document.getElementById('welcomeText').textContent = `Hoş geldiniz, ${username}`;
+                    renderFilters();
+                } else {
+                    loginError.textContent = '⚠️ ' + (data.message || 'Giriş başarısız!');
+                    loginError.style.display = 'block';
+                }
+            } catch (err) {
+                loginError.textContent = `⚠️ Hata: ${err.message}`;
+                loginError.style.display = 'block';
+            } finally {
+                loginBtn.disabled = false;
+                loginBtn.textContent = '🔐 Giriş Yap';
+            }
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            token = '';
+            connectionCodeRaw = '';
+            currentData = null;
+            username = '';
+            document.getElementById('loginScreen').style.display = 'block';
+            document.getElementById('dashboardScreen').classList.remove('active');
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+        });
+
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                activeTab = tab.dataset.tab;
+                currentData = null;
+                document.getElementById('reportContainer').innerHTML = '';
+                document.getElementById('alertContainer').innerHTML = '';
+                document.getElementById('exportBtn').style.display = 'none';
+                renderFilters();
+            });
+        });
+
+        function renderFilters() {
+            const f = document.getElementById('filters');
+            let html = '';
+
+            if (activeTab === 'isleticiSatis') {
+                html = `
+                    <div class="form-group"><label>Başlangıç (dd.mm.yyyy)</label><input type="text" id="raporBaslangic" value="01.06.2026"></div>
+                    <div class="form-group"><label>Bitiş (dd.mm.yyyy)</label><input type="text" id="raporBitis" value="02.06.2026"></div>
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID</label><input type="text" id="saticiid" value="39286"></div>
+                    <div class="form-group"><label>Teslim Noktası</label><input type="text" id="teslimnoktasiid"></div>
+                    <div class="form-group"><label>Bölge ID</label><input type="text" id="bolgeid"></div>
+                    <div class="form-group"><label>Tip</label><select id="tip"><option value="">Hepsi</option><option value="E">Faturalaşmış (E)</option><option value="H" selected>Faturalaşmamış (H)</option></select></div>
+                `;
+            } else if (activeTab === 'stok') {
+                html = `
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID (Zorunlu)</label><input type="text" id="saticiid" value="39286"></div>
+                    <div class="form-group"><label>İade</label><select id="iade"><option value="E">Evet (E)</option><option value="H" selected>Hayır (H)</option></select></div>
+                `;
+            } else if (activeTab === 'teslimNoktasi') {
+                html = `
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Teslim Noktası ID</label><input type="text" id="teslimnoktasiid"></div>
+                `;
+            } else if (activeTab === 'eticaret') {
+                html = `
+                    <div class="form-group"><label>Başlangıç (dd.mm.yyyy)</label><input type="text" id="raporBaslangic" value="01.06.2026"></div>
+                    <div class="form-group"><label>Bitiş (dd.mm.yyyy, Max 31 gün)</label><input type="text" id="raporBitis" value="02.06.2026"></div>
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID</label><input type="text" id="saticiid" value="39286"></div>
+                    <div class="form-group"><label>Ürün Kodu</label><input type="text" id="urunKodu"></div>
+                    <div class="form-group"><label>Barkod</label><input type="text" id="barkod"></div>
+                `;
+            } else if (activeTab === 'gunlukSatis') {
+                html = `
+                    <div class="form-group"><label>Başlangıç (yyyy-mm-dd)</label><input type="date" id="raporBaslangic" value="2026-06-01"></div>
+                    <div class="form-group"><label>Bitiş (yyyy-mm-dd, Max 90 gün)</label><input type="date" id="raporBitis" value="2026-06-02"></div>
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı IDs</label><input type="text" id="saticiIds" value="39286"></div>
+                `;
+            } else if (activeTab === 'bulunurlukV6') {
+                html = `
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID (Zorunlu)</label><input type="text" id="saticiId" value="39286"></div>
+                    <div class="form-group"><label>Ürün Kodu</label><input type="text" id="urunKodu"></div>
+                    <div class="form-group"><label>Teslim Noktası ID</label><input type="text" id="teslimNoktasiId"></div>
+                `;
+            } else if (activeTab === 'bulunurluk') {
+                html = `
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID (Zorunlu)</label><input type="text" id="saticiId" value="39286"></div>
+                    <div class="form-group"><label>Ürün Kodu</label><input type="text" id="urunKodu"></div>
+                `;
+            } else if (activeTab === 'portfoy') {
+                html = `
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID (Zorunlu)</label><input type="text" id="saticiId" value="39286"></div>
+                    <div class="form-group"><label>Alıcı Ürün Kodu</label><input type="text" id="aliciUrunKodu"></div>
+                    <div class="form-group"><label>Barkod</label><input type="text" id="barkod"></div>
+                    <div class="form-group"><label>Teslim Noktası</label><input type="text" id="teslimNoktasi"></div>
+                `;
+            } else if (activeTab === 'magazaUrun') {
+                html = `
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID (Zorunlu)</label><input type="text" id="saticiId" value="39286"></div>
+                    <div class="form-group"><label>Alıcı Ürün Kodu</label><input type="text" id="AliciUrunKodu"></div>
+                    <div class="form-group"><label>Barkod</label><input type="text" id="barkod"></div>
+                    <div class="form-group"><label>Teslim Noktası</label><input type="text" id="teslimNoktasi"></div>
+                `;
+            } else if (activeTab === 'ekstre' || activeTab === 'odeme') {
+                html = `
+                    <div class="form-group"><label>Başlangıç (yyyy-mm-dd)</label><input type="date" id="baslangicTarihi" value="2026-06-01"></div>
+                    <div class="form-group"><label>Bitiş (yyyy-mm-dd)</label><input type="date" id="bitisTarihi" value="2026-06-02"></div>
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı IDs (Zorunlu)</label><input type="text" id="saticiIds" value="39286"></div>
+                `;
+            } else if (activeTab === 'girisHareketleri') {
+                html = `
+                    <div class="form-group"><label>Başlangıç (yyyy-mm-dd)</label><input type="date" id="baslangicTarihi" value="2026-06-01"></div>
+                    <div class="form-group"><label>Bitiş (yyyy-mm-dd)</label><input type="date" id="bitisTarihi" value="2026-06-02"></div>
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID</label><input type="text" id="saticiId" value="39286"></div>
+                    <div class="form-group"><label>Fiş Türü</label><input type="text" id="fisTuru"></div>
+                `;
+            } else if (activeTab === 'saticiUrun') {
+                html = `
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID</label><input type="text" id="saticiId" value="39286"></div>
+                    <div class="form-group"><label>Satıcı Ürün Kodu</label><input type="text" id="saticiUrunKodu"></div>
+                    <div class="form-group"><label>Alıcı Ürün Kodu</label><input type="text" id="aliciUrunKodu"></div>
+                `;
+            } else if (activeTab === 'planogram') {
+                html = `
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID (Zorunlu)</label><input type="text" id="saticiId" value="39286"></div>
+                    <div class="form-group"><label>Mal No</label><input type="text" id="malNo"></div>
+                    <div class="form-group"><label>Teslim Noktası</label><input type="text" id="teslimNoktasi"></div>
+                `;
+            } else if (activeTab === 'reyonGoruntuleme') {
+                html = `
+                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Satıcı ID (Zorunlu)</label><input type="text" id="saticiId" value="39286"></div>
+                    <div class="form-group"><label>Şube ID (Zorunlu)</label><select id="subeId"><option value="">Seçin</option><option value="2">EGE</option><option value="3">İÇ ANADOLU</option><option value="4">DOĞU AKDENİZ</option><option value="5">BATI AKDENİZ</option><option value="6">ERZURUM</option><option value="10">DOĞU MARMARA</option><option value="12">DOĞU KARADENİZ</option><option value="13">KUZEY EGE</option><option value="14">GÜNEY EGE</option><option value="17">BATI MARMARA</option></select></div>
+                    <div class="form-group"><label>Ana Grup</label><input type="text" id="anaGrup"></div>
+                    <div class="form-group"><label>Marka</label><select id="marka"><option value="">Tümü</option><option value="1">MİGROS</option><option value="3">5M</option><option value="10">MACRO</option></select></div>
+                    <div class="form-group"><label>Format</label><select id="format"><option value="">Tümü</option><option value="1">M</option><option value="2">MM</option><option value="3">MMM</option></select></div>
+                    <div class="form-group"><label>Mağaza</label><input type="text" id="magaza"></div>
+                `;
+            }
+
+            f.innerHTML = html;
+        }
+
+        document.getElementById('fetchBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('fetchBtn');
+            btn.disabled = true;
+            btn.textContent = '🔄 Yükleniyor...';
+            document.getElementById('reportContainer').innerHTML = '<div class="loading"><div class="spinner"></div><p>Rapor yükleniyor...</p></div>';
+            document.getElementById('alertContainer').innerHTML = '';
+            document.getElementById('exportBtn').style.display = 'none';
+
+            try {
+                const hashedConnectionCode = await sha1(connectionCodeRaw + username);
+                let endpoint = '';
+                
+                if (activeTab === 'isleticiSatis') {
+                    endpoint = `/isleticirapor/rapor?pageno=${document.getElementById('pageNo').value}&raporBaslangic=${document.getElementById('raporBaslangic').value}&raporBitis=${document.getElementById('raporBitis').value}&saticiid=${document.getElementById('saticiid').value || ''}&teslimnoktasiid=${document.getElementById('teslimnoktasiid').value || ''}&bolgeid=${document.getElementById('bolgeid').value || ''}&tip=${document.getElementById('tip').value || ''}`;
+                } else if (activeTab === 'stok') {
+                    endpoint = `/report/get-stok/?pageno=${document.getElementById('pageNo').value}&saticiid=${document.getElementById('saticiid').value}&iade=${document.getElementById('iade').value}`;
+                } else if (activeTab === 'teslimNoktasi') {
+                    endpoint = `/report/get-teslim-noktasi?pageno=${document.getElementById('pageNo').value}&teslimnoktasiid=${document.getElementById('teslimnoktasiid').value || ''}`;
+                } else if (activeTab === 'eticaret') {
+                    endpoint = `/report/get-eticaret-rapor?pageno=${document.getElementById('pageNo').value}&raporBaslangic=${document.getElementById('raporBaslangic').value}&raporBitis=${document.getElementById('raporBitis').value}&saticiId=${document.getElementById('saticiid').value || ''}&urunKodu=${document.getElementById('urunKodu').value || ''}&barkod=${document.getElementById('barkod').value || ''}`;
+                } else if (activeTab === 'gunlukSatis') {
+                    endpoint = `/report/get-gunluk-satis?pageno=${document.getElementById('pageNo').value}&raporBaslangic=${document.getElementById('raporBaslangic').value}&raporBitis=${document.getElementById('raporBitis').value}&saticild=${document.getElementById('saticiIds').value || ''}`;
+                } else if (activeTab === 'bulunurlukV6') {
+                    endpoint = `/report/get-bulunurluk-rapor-v6?pageno=${document.getElementById('pageNo').value}&saticiId=${document.getElementById('saticiId').value}&urunKodu=${document.getElementById('urunKodu').value || ''}&teslimNoktasiId=${document.getElementById('teslimNoktasiId').value || ''}`;
+                } else if (activeTab === 'bulunurluk') {
+                    endpoint = `/report/get-bulunurluk-rapor?pageno=${document.getElementById('pageNo').value}&saticiId=${document.getElementById('saticiId').value}&urunKodu=${document.getElementById('urunKodu').value || ''}`;
+                } else if (activeTab === 'portfoy') {
+                    endpoint = `/report/get-portfoy-rapor?pageno=${document.getElementById('pageNo').value}&saticiId=${document.getElementById('saticiId').value}&aliciUrunKodu=${document.getElementById('aliciUrunKodu').value || ''}&barkod=${document.getElementById('barkod').value || ''}&teslimNoktasi=${document.getElementById('teslimNoktasi').value || ''}`;
+                } else if (activeTab === 'magazaUrun') {
+                    endpoint = `/report/get-magaza-urun-depo-rapor?pageno=${document.getElementById('pageNo').value}&saticiId=${document.getElementById('saticiId').value}&AliciUrunKodu=${document.getElementById('AliciUrunKodu').value || ''}&barkod=${document.getElementById('barkod').value || ''}&teslimNoktasi=${document.getElementById('teslimNoktasi').value || ''}`;
+                } else if (activeTab === 'ekstre') {
+                    endpoint = `/report/get-ekstre-rapor?pageno=${document.getElementById('pageNo').value}&baslangicTarihi=${document.getElementById('baslangicTarihi').value}&bitisTarihi=${document.getElementById('bitisTarihi').value}&saticiIds=${document.getElementById('saticiIds').value}`;
+                } else if (activeTab === 'odeme') {
+                    endpoint = `/report/get-odeme-rapor?pageno=${document.getElementById('pageNo').value}&baslangicTarihi=${document.getElementById('baslangicTarihi').value}&bitisTarihi=${document.getElementById('bitisTarihi').value}&saticiIds=${document.getElementById('saticiIds').value}`;
+                } else if (activeTab === 'girisHareketleri') {
+                    endpoint = `/report/get-depo-magaza-rapor?pageno=${document.getElementById('pageNo').value}&baslangicTarihi=${document.getElementById('baslangicTarihi').value}&bitisTarihi=${document.getElementById('bitisTarihi').value}&saticiId=${document.getElementById('saticiId').value || ''}&fisTuru=${document.getElementById('fisTuru').value || ''}`;
+                } else if (activeTab === 'saticiUrun') {
+                    endpoint = `/report/get-satici-urun-bilgi?pageno=${document.getElementById('pageNo').value}&saticiId=${document.getElementById('saticiId').value || ''}&saticiUrunKodu=${document.getElementById('saticiUrunKodu').value || ''}&aliciUrunKodu=${document.getElementById('aliciUrunKodu').value || ''}`;
+                } else if (activeTab === 'planogram') {
+                    endpoint = `/report/get-planogram-rapor?pageno=${document.getElementById('pageNo').value}&saticiId=${document.getElementById('saticiId').value}&malNo=${document.getElementById('malNo').value || ''}&teslimNoktasi=${document.getElementById('teslimNoktasi').value || ''}`;
+                } else if (activeTab === 'reyonGoruntuleme') {
+                    endpoint = `/report/get-reyon-goruntuleme?pageno=${document.getElementById('pageNo').value}&saticiId=${document.getElementById('saticiId').value}&subeId=${document.getElementById('subeId').value}&anaGrup=${document.getElementById('anaGrup').value || ''}&marka=${document.getElementById('marka').value || ''}&format=${document.getElementById('format').value || ''}&magaza=${document.getElementById('magaza').value || ''}`;
+                }
+                
+                const response = await fetch(`${PROXY_URL}${endpoint}`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': hashedConnectionCode }
+                });
+
+                const data = await response.json();
+
+                if (data.data && data.data.length > 0) {
+                    currentData = data;
+                    displayData(data);
+                    document.getElementById('exportBtn').style.display = 'block';
+                    showAlert('success', `✅ ${data.data.length} kayıt bulundu`);
+                } else if (data.message) {
+                    showAlert('error', `Hata: ${data.message}`);
+                } else {
+                    showAlert('warning', 'Kayıt bulunamadı');
+                }
+            } catch (err) {
+                showAlert('error', `Hata: ${err.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔍 Raporu Getir';
+            }
+        });
+
+        function displayData(data) {
+            const container = document.getElementById('reportContainer');
+            let items = data.data || [];
+            
+            // Eğer SalesList varsa (nested), onu aç
+            if (items.length > 0 && items[0].SalesList && Array.isArray(items[0].SalesList)) {
+                items = items.flatMap(item => item.SalesList || []);
+            }
+            
+            if (!items.length) {
+                container.innerHTML = '<div class="card"><p class="alert alert-warning">Veri bulunamadı</p></div>';
+                return;
+            }
+
+            let html = '<div class="card"><div class="table-container"><table><thead><tr>';
+            const keys = Object.keys(items[0]);
+            keys.forEach(key => html += `<th>${key}</th>`);
+            html += '</tr></thead><tbody>';
+
+            items.slice(0, 100).forEach(item => {
+                html += '<tr>';
+                keys.forEach(key => {
+                    let val = item[key];
+                    if (typeof val === 'object') {
+                        val = Array.isArray(val) ? `[${val.length} items]` : JSON.stringify(val);
+                    } else if (typeof val === 'number') {
+                        val = val.toLocaleString('tr-TR');
+                    }
+                    html += `<td>${val || '-'}</td>`;
+                });
+                html += '</tr>';
+            });
+
+            html += '</tbody></table></div>';
+            if (data.totalPages > 1) html += `<div style="padding: 1rem; text-align: center; color: #6b7280;">Sayfa ${data.pageNo || 1} / ${data.totalPages}</div>`;
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        document.getElementById('exportBtn').addEventListener('click', () => {
+            if (!currentData || !currentData.data) return;
+            const data = currentData.data;
+            const headers = Object.keys(data[0]).join(',');
+            const rows = data.map(row => Object.values(row).map(val => typeof val === 'string' && val.includes(',') ? `"${val}"` : val).join(','));
+            const csv = [headers, ...rows].join('\n');
+            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `migros_${activeTab}_${new Date().toISOString().split('T')[0]}.csv`;
+            link.click();
+        });
+
+        function showAlert(type, message) {
+            const alertClass = type === 'error' ? 'alert-error' : type === 'success' ? 'alert-success' : 'alert-warning';
+            document.getElementById('alertContainer').innerHTML = `<div class="card alert ${alertClass}">${message}</div>`;
+        }
+
+        document.getElementById('password').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') document.getElementById('loginBtn').click();
+        });
+
+        renderFilters();
+    </script>
+</body>
+</html>

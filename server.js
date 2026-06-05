@@ -15,7 +15,7 @@ app.use(express.static(path.join(__dirname, 'frontend')));
 
 // Ana sayfa
 app.get('/', (req, res) => {
-  res.redirect('/api/health');
+  res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
 });
 
 // Konfigürasyon
@@ -245,6 +245,62 @@ function saveToDatabase(tableName, data) {
     });
   });
 }
+
+// ========== MİGROS API PROXY ==========
+
+// Migros API'ye istek ilet (frontend'den gelen token ile)
+function proxyToMigros(path, method, headers, body, res) {
+  const options = {
+    hostname: 'api-prod.migros.com.tr',
+    port: 443,
+    path: `/rest/b2b/api/v1${path}`,
+    method: method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers
+    },
+    timeout: 120000
+  };
+
+  const req = https.request(options, (apiRes) => {
+    let data = '';
+    apiRes.on('data', chunk => data += chunk);
+    apiRes.on('end', () => {
+      try {
+        res.json(JSON.parse(data));
+      } catch (e) {
+        res.status(500).json({ error: 'Parse hatası' });
+      }
+    });
+  });
+
+  req.on('error', (err) => res.status(500).json({ error: err.message }));
+  req.on('timeout', () => res.status(504).json({ error: 'Timeout' }));
+
+  if (body) req.write(body);
+  req.end();
+}
+
+// Login proxy
+app.post('/auth/login', (req, res) => {
+  const body = JSON.stringify(req.body);
+  proxyToMigros('/auth/login', 'POST', { 'Content-Length': Buffer.byteLength(body) }, body, res);
+});
+
+// Rapor proxy (GET)
+app.get('/report/*', (req, res) => {
+  proxyToMigros(req.url, 'GET', {
+    'Authorization': req.headers['authorization'] || '',
+    'ConnectionCode': req.headers['connectioncode'] || ''
+  }, null, res);
+});
+
+app.get('/isleticirapor/*', (req, res) => {
+  proxyToMigros(req.url, 'GET', {
+    'Authorization': req.headers['authorization'] || '',
+    'ConnectionCode': req.headers['connectioncode'] || ''
+  }, null, res);
+});
 
 // ========== API ENDPOINTS ==========
 
