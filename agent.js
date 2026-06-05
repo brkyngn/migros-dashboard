@@ -11,7 +11,7 @@ const CONFIG = {
   PASSWORD: process.env.MIGROS_PASSWORD,
   SATICI_ID: process.env.SATICI_ID,
   DB_PATH: process.env.DB_PATH || path.join(__dirname, '../data/migros-data.db'),
-  CHECK_HOURS: [8, 14, 20],
+  CHECK_HOURS: [6],
   NODE_ENV: process.env.NODE_ENV || 'development'
 };
 
@@ -257,11 +257,10 @@ function logToDatabase(raporAdi, durum, satirSayisi, mesaj) {
 
 // Günlük Satış çek
 async function fetchGunlukSatis() {
-  const today = new Date();
-  const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-  
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
   const raporBaslangic = yesterday.toISOString().split('T')[0];
-  const raporBitis = today.toISOString().split('T')[0];
+  const raporBitis = raporBaslangic;
 
   const endpoint = `/report/get-gunluk-satis?pageno=1&raporBaslangic=${raporBaslangic}&raporBitis=${raporBitis}&saticild=${CONFIG.SATICI_ID}`;
   const response = await fetchData(endpoint, 'Günlük Satış');
