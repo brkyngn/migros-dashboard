@@ -4,11 +4,8 @@
   "description": "Migros B2B Reporting and Analytics System",
   "main": "backend/server.js",
   "scripts": {
-    "start": "npm --prefix backend start",
-    "dev": "concurrently \"npm --prefix backend run dev\" \"npm --prefix agent run dev\"",
-    "backend": "npm --prefix backend start",
-    "agent": "npm --prefix agent start",
-    "install-all": "npm --prefix backend install && npm --prefix agent install",
+    "start": "node server.js",
+    "agent": "node agent.js",
     "docker:build": "docker-compose build",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
@@ -23,6 +20,12 @@
   ],
   "author": "Kittycady",
   "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1"
+  },
   "devDependencies": {
     "concurrently": "^8.2.0"
   },
