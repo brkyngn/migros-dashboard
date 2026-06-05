@@ -632,39 +632,42 @@
             const fmtDec = n => (parseFloat(n)||0).toLocaleString('tr-TR', {minimumFractionDigits:2, maximumFractionDigits:2});
 
             // KPI
-            const toplamTutar  = items.reduce((s,r) => s + (parseFloat(r.NETSALESVALUE)||0), 0);
-            const toplamAdet   = items.reduce((s,r) => s + (parseFloat(r.QUANTITYSOLD)||0), 0);
-            const magazaSayisi = new Set(items.map(r => r.STORENUMBER)).size;
-            const urunCesidi   = new Set(items.map(r => r.SUPPLIERITEMNUMBER)).size;
+            // Alan adlarını normalize et (API camelCase veya UPPERCASE dönebilir)
+            const g = (r, ...keys) => { for (const k of keys) { if (r[k] !== undefined && r[k] !== null) return r[k]; } return null; };
+
+            const toplamTutar  = items.reduce((s,r) => s + (parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0), 0);
+            const toplamAdet   = items.reduce((s,r) => s + (parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0), 0);
+            const magazaSayisi = new Set(items.map(r => g(r,'StoreNumber','STORENUMBER'))).size;
+            const urunCesidi   = new Set(items.map(r => g(r,'SupplierItemNumber','SUPPLIERITEMNUMBER'))).size;
 
             // Mağaza tipi
             const storeTypeMap = {'1':'MMM','2':'MM','3':'M'};
             const tipler = {};
             items.forEach(r => {
-                const t = storeTypeMap[r.STORETYPE] || r.STORETYPE || '?';
+                const t = storeTypeMap[g(r,'StoreType','STORETYPE')] || g(r,'StoreType','STORETYPE') || '?';
                 if (!tipler[t]) tipler[t] = { adet: 0, tutar: 0 };
-                tipler[t].adet  += parseFloat(r.QUANTITYSOLD)||0;
-                tipler[t].tutar += parseFloat(r.NETSALESVALUE)||0;
+                tipler[t].adet  += parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0;
+                tipler[t].tutar += parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0;
             });
 
             // Günlük trend
             const gunMap = {};
             items.forEach(r => {
-                const gun = (r.DATETRANSACTION||'').split(' ')[0].split('T')[0];
+                const gun = (g(r,'DateTransaction','DATETRANSACTION')||'').split(' ')[0].split('T')[0];
                 if (!gun) return;
                 if (!gunMap[gun]) gunMap[gun] = { adet: 0, tutar: 0 };
-                gunMap[gun].adet  += parseFloat(r.QUANTITYSOLD)||0;
-                gunMap[gun].tutar += parseFloat(r.NETSALESVALUE)||0;
+                gunMap[gun].adet  += parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0;
+                gunMap[gun].tutar += parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0;
             });
             const gunler = Object.entries(gunMap).sort((a,b) => a[0].localeCompare(b[0]));
 
             // Top ürünler
             const urunMap = {};
             items.forEach(r => {
-                const ad = r.SUPPLIERITEMNAME || r.SUPPLIERITEMNUMBER || '-';
+                const ad = g(r,'SupplierItemName','SUPPLIERITEMNAME') || g(r,'SupplierItemNumber','SUPPLIERITEMNUMBER') || '-';
                 if (!urunMap[ad]) urunMap[ad] = { adet: 0, tutar: 0 };
-                urunMap[ad].adet  += parseFloat(r.QUANTITYSOLD)||0;
-                urunMap[ad].tutar += parseFloat(r.NETSALESVALUE)||0;
+                urunMap[ad].adet  += parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0;
+                urunMap[ad].tutar += parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0;
             });
             const topUrunler = Object.entries(urunMap).sort((a,b) => b[1].tutar - a[1].tutar).slice(0,10);
             const maxUrunTutar = topUrunler[0]?.[1]?.tutar || 1;
@@ -672,10 +675,11 @@
             // Top mağazalar
             const magMap = {};
             items.forEach(r => {
-                const ad = r.STORENAME || r.STORENUMBER || '-';
-                if (!magMap[ad]) magMap[ad] = { adet: 0, tutar: 0, tip: storeTypeMap[r.STORETYPE]||r.STORETYPE };
-                magMap[ad].adet  += parseFloat(r.QUANTITYSOLD)||0;
-                magMap[ad].tutar += parseFloat(r.NETSALESVALUE)||0;
+                const ad = g(r,'StoreName','STORENAME') || g(r,'StoreNumber','STORENUMBER') || '-';
+                const tip = storeTypeMap[g(r,'StoreType','STORETYPE')] || g(r,'StoreType','STORETYPE');
+                if (!magMap[ad]) magMap[ad] = { adet: 0, tutar: 0, tip };
+                magMap[ad].adet  += parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0;
+                magMap[ad].tutar += parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0;
             });
             const topMagazalar = Object.entries(magMap).sort((a,b) => b[1].tutar - a[1].tutar).slice(0,10);
 
@@ -787,16 +791,24 @@
                         <th style="padding:.5rem;text-align:right;">Net Satış</th>
                         <th style="padding:.5rem;text-align:right;">Kümülatif Oran</th>
                     </tr></thead><tbody>
-                    ${items.slice(0,200).map((r,i) => `
-                        <tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
-                            <td style="padding:.5rem;color:#6b7280;">${(r.DATETRANSACTION||'').split('T')[0]}</td>
-                            <td style="padding:.5rem;font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.SUPPLIERITEMNAME||''}">${r.SUPPLIERITEMNAME||'-'}</td>
-                            <td style="padding:.5rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.STORENAME||''}">${r.STORENAME||'-'}</td>
-                            <td style="padding:.5rem;text-align:center;"><span class="badge" style="background:${tipRenk[storeTypeMap[r.STORETYPE]]||'#6b7280'}20;color:${tipRenk[storeTypeMap[r.STORETYPE]]||'#6b7280'}">${storeTypeMap[r.STORETYPE]||r.STORETYPE||'-'}</span></td>
-                            <td style="padding:.5rem;text-align:right;">${fmt(r.QUANTITYSOLD||0)}</td>
-                            <td style="padding:.5rem;text-align:right;font-weight:600;">${fmtTL(r.NETSALESVALUE||0)}</td>
-                            <td style="padding:.5rem;text-align:right;color:#6b7280;">%${fmtDec(r.KUMULENETSATISORANI||0)}</td>
-                        </tr>`).join('')}
+                    ${items.slice(0,200).map((r,i) => {
+                        const tarih = (g(r,'DateTransaction','DATETRANSACTION')||'').split('T')[0].split(' ')[0];
+                        const urunAd = g(r,'SupplierItemName','SUPPLIERITEMNAME')||'-';
+                        const magAd  = g(r,'StoreName','STORENAME')||'-';
+                        const tip    = storeTypeMap[g(r,'StoreType','STORETYPE')] || g(r,'StoreType','STORETYPE') || '-';
+                        const adet   = g(r,'QuantitySold','QUANTITYSOLD')||0;
+                        const tutar  = g(r,'NetSalesValue','NETSALESVALUE')||0;
+                        const kumOran= g(r,'KumuleNetSatisOrani','KUMULENETSATISORANI')||0;
+                        return `<tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
+                            <td style="padding:.5rem;color:#6b7280;">${tarih||'-'}</td>
+                            <td style="padding:.5rem;font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${urunAd}">${urunAd}</td>
+                            <td style="padding:.5rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${magAd}">${magAd}</td>
+                            <td style="padding:.5rem;text-align:center;"><span class="badge" style="background:${tipRenk[tip]||'#6b7280'}20;color:${tipRenk[tip]||'#6b7280'}">${tip}</span></td>
+                            <td style="padding:.5rem;text-align:right;">${fmt(adet)}</td>
+                            <td style="padding:.5rem;text-align:right;font-weight:600;">${fmtTL(tutar)}</td>
+                            <td style="padding:.5rem;text-align:right;color:#6b7280;">%${fmtDec(kumOran)}</td>
+                        </tr>`;
+                    }).join('')}
                     </tbody>
                 </table>
                 </div>
