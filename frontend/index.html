@@ -234,9 +234,9 @@
                     <div class="form-group"><label>Barkod</label><input type="text" id="barkod"></div>
                 `;
             } else if (activeTab === 'gunlukSatis') {
+                const bugun = new Date().toISOString().split('T')[0];
                 html = `
-                    <div class="form-group"><label>Başlangıç (yyyy-mm-dd)</label><input type="date" id="raporBaslangic" value="2026-06-01"></div>
-                    <div class="form-group"><label>Bitiş (yyyy-mm-dd, Max 90 gün)</label><input type="date" id="raporBitis" value="2026-06-05"></div>
+                    <div class="form-group"><label>Tarih (yyyy-mm-dd)</label><input type="date" id="raporBaslangic" value="${bugun}"></div>
                     <div class="form-group"><label>Satıcı IDs</label><input type="text" id="saticiIds" value="39286"></div>
                 `;
             } else if (activeTab === 'bulunurlukV6') {
@@ -333,37 +333,57 @@
                 } else if (activeTab === 'eticaret') {
                     endpoint = `/report/get-eticaret-rapor?pageno=${document.getElementById('pageNo').value}&raporBaslangic=${document.getElementById('raporBaslangic').value}&raporBitis=${document.getElementById('raporBitis').value}&saticiId=${document.getElementById('saticiid').value || ''}&urunKodu=${document.getElementById('urunKodu').value || ''}&barkod=${document.getElementById('barkod').value || ''}`;
                 } else if (activeTab === 'gunlukSatis') {
-                    const baslangic = document.getElementById('raporBaslangic').value;
-                    const bitis = document.getElementById('raporBitis').value;
+                    const baslangic = new Date(document.getElementById('raporBaslangic').value);
+                    const bitis = baslangic;
                     const saticiIds = document.getElementById('saticiIds').value || '';
-                    const baseEndpoint = `/report/get-gunluk-satis?raporBaslangic=${baslangic}&raporBitis=${bitis}&saticild=${saticiIds}`;
+                    let allItems = [];
+                    let lastResponse = null;
 
-                    // İlk sayfayı çek, toplam sayfa sayısını öğren
-                    const firstRes = await fetch(`${PROXY_URL}${baseEndpoint}&pageno=1`, {
-                        headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': hashedConnectionCode }
-                    });
-                    const firstData = await firstRes.json();
-                    const totalPages = firstData.totalPages || 1;
-                    let allItems = firstData.data || [];
+                    // Tarihi 7 günlük parçalara böl
+                    const chunks = [];
+                    let chunkStart = new Date(baslangic);
+                    while (chunkStart <= bitis) {
+                        const chunkEnd = new Date(chunkStart);
+                        chunkEnd.setDate(chunkEnd.getDate() + 6);
+                        if (chunkEnd > bitis) chunkEnd.setTime(bitis.getTime());
+                        chunks.push({
+                            start: chunkStart.toISOString().split('T')[0],
+                            end: chunkEnd.toISOString().split('T')[0]
+                        });
+                        chunkStart = new Date(chunkEnd);
+                        chunkStart.setDate(chunkStart.getDate() + 1);
+                    }
 
-                    // Kalan sayfaları çek
-                    for (let p = 2; p <= totalPages; p++) {
-                        btn.textContent = `🔄 Yükleniyor... (${p}/${totalPages})`;
-                        const r = await fetch(`${PROXY_URL}${baseEndpoint}&pageno=${p}`, {
+                    for (let ci = 0; ci < chunks.length; ci++) {
+                        const { start, end } = chunks[ci];
+                        btn.textContent = `🔄 Yükleniyor... (${ci + 1}/${chunks.length} hafta)`;
+                        const baseEp = `/report/get-gunluk-satis?raporBaslangic=${start}&raporBitis=${end}&saticild=${saticiIds}`;
+
+                        const firstRes = await fetch(`${PROXY_URL}${baseEp}&pageno=1`, {
                             headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': hashedConnectionCode }
                         });
-                        const d = await r.json();
-                        if (d.data) allItems = allItems.concat(d.data);
+                        const firstData = await firstRes.json();
+                        lastResponse = firstData;
+                        const totalPages = firstData.totalPages || 1;
+                        if (firstData.data) allItems = allItems.concat(firstData.data);
+
+                        for (let p = 2; p <= totalPages; p++) {
+                            const r = await fetch(`${PROXY_URL}${baseEp}&pageno=${p}`, {
+                                headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': hashedConnectionCode }
+                            });
+                            const d = await r.json();
+                            if (d.data) allItems = allItems.concat(d.data);
+                        }
                     }
 
                     if (allItems.length > 0) {
-                        currentData = { data: allItems, totalPages };
+                        currentData = { data: allItems };
                         displayData(currentData);
                         document.getElementById('exportBtn').style.display = 'block';
-                        showAlert('success', `✅ ${allItems.length} kayıt bulundu (${totalPages} sayfa)`);
+                        showAlert('success', `✅ ${allItems.length} kayıt bulundu`);
                     } else {
-                        const errMsg = firstData.message || firstData.error || JSON.stringify(firstData);
-                        showAlert('warning', `Kayıt bulunamadı. API cevabı: ${errMsg}`);
+                        const errMsg = lastResponse ? (lastResponse.message || lastResponse.error || JSON.stringify(lastResponse)) : 'Cevap alınamadı';
+                        showAlert('warning', `Kayıt bulunamadı. API: ${errMsg}`);
                     }
                     btn.disabled = false;
                     btn.textContent = '🔍 Raporu Getir';
@@ -416,41 +436,183 @@
         });
 
         function displayData(data) {
+            if (activeTab === 'stok') { displayStokDashboard(data.data || []); return; }
+
             const container = document.getElementById('reportContainer');
             let items = data.data || [];
-            
-            // Eğer SalesList varsa (nested), onu aç
             if (items.length > 0 && items[0].SalesList && Array.isArray(items[0].SalesList)) {
                 items = items.flatMap(item => item.SalesList || []);
             }
-            
             if (!items.length) {
                 container.innerHTML = '<div class="card"><p class="alert alert-warning">Veri bulunamadı</p></div>';
                 return;
             }
-
             let html = '<div class="card"><div class="table-container"><table><thead><tr>';
             const keys = Object.keys(items[0]);
             keys.forEach(key => html += `<th>${key}</th>`);
             html += '</tr></thead><tbody>';
-
             items.slice(0, 100).forEach(item => {
                 html += '<tr>';
                 keys.forEach(key => {
                     let val = item[key];
-                    if (typeof val === 'object') {
-                        val = Array.isArray(val) ? `[${val.length} items]` : JSON.stringify(val);
-                    } else if (typeof val === 'number') {
-                        val = val.toLocaleString('tr-TR');
-                    }
+                    if (typeof val === 'object') val = Array.isArray(val) ? `[${val.length} items]` : JSON.stringify(val);
+                    else if (typeof val === 'number') val = val.toLocaleString('tr-TR');
                     html += `<td>${val || '-'}</td>`;
                 });
                 html += '</tr>';
             });
-
             html += '</tbody></table></div>';
-            if (data.totalPages > 1) html += `<div style="padding: 1rem; text-align: center; color: #6b7280;">Sayfa ${data.pageNo || 1} / ${data.totalPages}</div>`;
+            if (data.totalPages > 1) html += `<div style="padding:1rem;text-align:center;color:#6b7280;">Sayfa ${data.pageNo||1} / ${data.totalPages}</div>`;
             html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function displayStokDashboard(items) {
+            const container = document.getElementById('reportContainer');
+            if (!items.length) { container.innerHTML = '<div class="card"><p class="alert alert-warning">Veri bulunamadı</p></div>'; return; }
+
+            // KPI hesapla
+            const toplamStok    = items.reduce((s, r) => s + (parseFloat(r.STOK_MIKTARI) || 0), 0);
+            const toplamTutar   = items.reduce((s, r) => s + (parseFloat(r.STOK_TUTARI)  || 0), 0);
+            const gunlukSatis   = items.reduce((s, r) => s + (parseFloat(r.GUNLUK_SATIS_MIKTARI) || 0), 0);
+            const gunlukTutar   = items.reduce((s, r) => s + (parseFloat(r.GUNLUK_SATIS_TUTARI)  || 0), 0);
+            const gunlukYukleme = items.reduce((s, r) => s + (parseFloat(r.GUNLUK_YUKLEME_MIKTARI) || 0), 0);
+            const stokGunlari   = items.filter(r => parseFloat(r.STOK_GUN) > 0).map(r => parseFloat(r.STOK_GUN));
+            const ortStokGun    = stokGunlari.length ? Math.round(stokGunlari.reduce((a,b)=>a+b,0)/stokGunlari.length) : 0;
+
+            // İl bazında özet
+            const ilMap = {};
+            items.forEach(r => {
+                const il = r.IL_ADI || 'Bilinmiyor';
+                if (!ilMap[il]) ilMap[il] = { stok: 0, satis: 0 };
+                ilMap[il].stok  += parseFloat(r.STOK_MIKTARI) || 0;
+                ilMap[il].satis += parseFloat(r.GUNLUK_SATIS_MIKTARI) || 0;
+            });
+            const iller = Object.entries(ilMap).sort((a,b) => b[1].stok - a[1].stok).slice(0, 10);
+
+            // Ürün bazında özet
+            const urunMap = {};
+            items.forEach(r => {
+                const ad = r.URUN_SATICI_ADI || r.SATICI_URUN_KODU || '-';
+                if (!urunMap[ad]) urunMap[ad] = { stok: 0, satis: 0, yukleme: 0, stokGun: 0, count: 0 };
+                urunMap[ad].stok    += parseFloat(r.STOK_MIKTARI) || 0;
+                urunMap[ad].satis   += parseFloat(r.GUNLUK_SATIS_MIKTARI) || 0;
+                urunMap[ad].yukleme += parseFloat(r.GUNLUK_YUKLEME_MIKTARI) || 0;
+                const sg = parseFloat(r.STOK_GUN);
+                if (sg > 0) { urunMap[ad].stokGun += sg; urunMap[ad].count++; }
+            });
+            const urunler = Object.entries(urunMap).sort((a,b) => b[1].stok - a[1].stok);
+
+            const fmt = n => Math.round(n).toLocaleString('tr-TR');
+            const fmtTL = n => Math.round(n).toLocaleString('tr-TR') + ' ₺';
+
+            let html = `
+            <style>
+                .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+                .kpi { background: white; border-radius: .75rem; padding: 1.25rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); border-left: 4px solid #f97316; }
+                .kpi-label { font-size: .75rem; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+                .kpi-value { font-size: 1.75rem; font-weight: 700; color: #1f2937; margin-top: .25rem; }
+                .kpi-sub { font-size: .75rem; color: #9ca3af; margin-top: .125rem; }
+                .dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+                @media(max-width:768px){ .dash-grid { grid-template-columns: 1fr; } }
+                .stok-table th { font-size: .7rem; }
+                .stok-table td { font-size: .82rem; }
+                .badge { display: inline-block; padding: .2rem .6rem; border-radius: 9999px; font-size: .7rem; font-weight: 600; }
+                .badge-green { background: #d1fae5; color: #065f46; }
+                .badge-red   { background: #fee2e2; color: #991b1b; }
+                .badge-gray  { background: #f3f4f6; color: #374151; }
+                .bar-wrap { background: #f3f4f6; border-radius: 9999px; height: 8px; margin-top: 4px; }
+                .bar-fill { background: linear-gradient(to right,#f97316,#ef4444); border-radius: 9999px; height: 8px; }
+            </style>
+
+            <div class="kpi-grid">
+                <div class="kpi"><div class="kpi-label">Toplam Stok</div><div class="kpi-value">${fmt(toplamStok)}</div><div class="kpi-sub">adet</div></div>
+                <div class="kpi"><div class="kpi-label">Stok Tutarı</div><div class="kpi-value">${fmtTL(toplamTutar)}</div></div>
+                <div class="kpi"><div class="kpi-label">Günlük Satış</div><div class="kpi-value">${fmt(gunlukSatis)}</div><div class="kpi-sub">${fmtTL(gunlukTutar)}</div></div>
+                <div class="kpi"><div class="kpi-label">Günlük Yükleme</div><div class="kpi-value">${fmt(gunlukYukleme)}</div><div class="kpi-sub">adet</div></div>
+                <div class="kpi"><div class="kpi-label">Ort. Stok Günü</div><div class="kpi-value">${ortStokGun}</div><div class="kpi-sub">gün</div></div>
+                <div class="kpi"><div class="kpi-label">Toplam Kayıt</div><div class="kpi-value">${fmt(items.length)}</div><div class="kpi-sub">dağıtım noktası</div></div>
+            </div>
+
+            <div class="dash-grid">
+                <div class="card">
+                    <h3 style="margin-bottom:1rem;font-size:1rem;">📍 İl Bazında Stok (Top 10)</h3>
+                    <table class="stok-table" style="width:100%;border-collapse:collapse;">
+                        <thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;">
+                            <th style="padding:.5rem;text-align:left;">İl</th>
+                            <th style="padding:.5rem;text-align:right;">Stok</th>
+                            <th style="padding:.5rem;text-align:right;">Günlük Satış</th>
+                        </tr></thead><tbody>
+                        ${iller.map(([il, d], i) => `
+                        <tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
+                            <td style="padding:.5rem .5rem;">${il}</td>
+                            <td style="padding:.5rem;text-align:right;font-weight:600;">${fmt(d.stok)}</td>
+                            <td style="padding:.5rem;text-align:right;color:#f97316;">${fmt(d.satis)}</td>
+                        </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="card">
+                    <h3 style="margin-bottom:1rem;font-size:1rem;">📦 Ürün Bazında Stok</h3>
+                    <div style="overflow-y:auto;max-height:400px;">
+                    <table class="stok-table" style="width:100%;border-collapse:collapse;">
+                        <thead style="position:sticky;top:0;"><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;">
+                            <th style="padding:.5rem;text-align:left;">Ürün</th>
+                            <th style="padding:.5rem;text-align:right;">Stok</th>
+                            <th style="padding:.5rem;text-align:right;">Satış</th>
+                            <th style="padding:.5rem;text-align:right;">Stok Gün</th>
+                        </tr></thead><tbody>
+                        ${urunler.map(([ad, d], i) => {
+                            const sg = d.count ? Math.round(d.stokGun/d.count) : 0;
+                            const badge = sg === 0 ? 'badge-gray' : sg < 7 ? 'badge-red' : 'badge-green';
+                            return `<tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
+                                <td style="padding:.5rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${ad}">${ad}</td>
+                                <td style="padding:.5rem;text-align:right;font-weight:600;">${fmt(d.stok)}</td>
+                                <td style="padding:.5rem;text-align:right;color:#f97316;">${fmt(d.satis)}</td>
+                                <td style="padding:.5rem;text-align:right;"><span class="badge ${badge}">${sg > 0 ? sg + ' gün' : '-'}</span></td>
+                            </tr>`;
+                        }).join('')}
+                        </tbody>
+                    </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3 style="margin-bottom:1rem;font-size:1rem;">📋 Detaylı Tablo</h3>
+                <div class="table-container">
+                <table class="stok-table" style="width:100%;border-collapse:collapse;">
+                    <thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;">
+                        <th style="padding:.5rem;">Ürün Adı</th>
+                        <th style="padding:.5rem;">Teslim Noktası</th>
+                        <th style="padding:.5rem;">İl</th>
+                        <th style="padding:.5rem;text-align:right;">Stok Miktarı</th>
+                        <th style="padding:.5rem;text-align:right;">Stok Tutarı</th>
+                        <th style="padding:.5rem;text-align:right;">Günlük Satış</th>
+                        <th style="padding:.5rem;text-align:right;">Günlük Yükleme</th>
+                        <th style="padding:.5rem;text-align:right;">Stok Gün</th>
+                    </tr></thead><tbody>
+                    ${items.slice(0, 200).map((r, i) => {
+                        const sg = parseFloat(r.STOK_GUN) || 0;
+                        const badge = sg === 0 ? 'badge-gray' : sg < 7 ? 'badge-red' : 'badge-green';
+                        return `<tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
+                            <td style="padding:.5rem;font-weight:500;">${r.URUN_SATICI_ADI||'-'}</td>
+                            <td style="padding:.5rem;font-size:.75rem;color:#6b7280;">${r.TESLIM_NOKTASI_ACIKLAMA||'-'}</td>
+                            <td style="padding:.5rem;">${r.IL_ADI||'-'}</td>
+                            <td style="padding:.5rem;text-align:right;font-weight:600;">${fmt(r.STOK_MIKTARI||0)}</td>
+                            <td style="padding:.5rem;text-align:right;">${fmtTL(r.STOK_TUTARI||0)}</td>
+                            <td style="padding:.5rem;text-align:right;color:#f97316;">${fmt(r.GUNLUK_SATIS_MIKTARI||0)}</td>
+                            <td style="padding:.5rem;text-align:right;color:#10b981;">${fmt(r.GUNLUK_YUKLEME_MIKTARI||0)}</td>
+                            <td style="padding:.5rem;text-align:right;"><span class="badge ${badge}">${sg>0?sg+' gün':'-'}</span></td>
+                        </tr>`;
+                    }).join('')}
+                    </tbody>
+                </table>
+                </div>
+                ${items.length > 200 ? `<div style="padding:1rem;text-align:center;color:#6b7280;font-size:.85rem;">İlk 200 kayıt gösteriliyor. CSV'ye aktararak tümünü görebilirsiniz.</div>` : ''}
+            </div>`;
+
             container.innerHTML = html;
         }
 
