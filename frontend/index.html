@@ -236,8 +236,7 @@
             } else if (activeTab === 'gunlukSatis') {
                 html = `
                     <div class="form-group"><label>Başlangıç (yyyy-mm-dd)</label><input type="date" id="raporBaslangic" value="2026-06-01"></div>
-                    <div class="form-group"><label>Bitiş (yyyy-mm-dd, Max 90 gün)</label><input type="date" id="raporBitis" value="2026-06-02"></div>
-                    <div class="form-group"><label>Sayfa</label><input type="number" id="pageNo" value="1" min="1"></div>
+                    <div class="form-group"><label>Bitiş (yyyy-mm-dd, Max 90 gün)</label><input type="date" id="raporBitis" value="2026-06-05"></div>
                     <div class="form-group"><label>Satıcı IDs</label><input type="text" id="saticiIds" value="39286"></div>
                 `;
             } else if (activeTab === 'bulunurlukV6') {
@@ -334,7 +333,40 @@
                 } else if (activeTab === 'eticaret') {
                     endpoint = `/report/get-eticaret-rapor?pageno=${document.getElementById('pageNo').value}&raporBaslangic=${document.getElementById('raporBaslangic').value}&raporBitis=${document.getElementById('raporBitis').value}&saticiId=${document.getElementById('saticiid').value || ''}&urunKodu=${document.getElementById('urunKodu').value || ''}&barkod=${document.getElementById('barkod').value || ''}`;
                 } else if (activeTab === 'gunlukSatis') {
-                    endpoint = `/report/get-gunluk-satis?pageno=${document.getElementById('pageNo').value}&raporBaslangic=${document.getElementById('raporBaslangic').value}&raporBitis=${document.getElementById('raporBitis').value}&saticild=${document.getElementById('saticiIds').value || ''}`;
+                    const baslangic = document.getElementById('raporBaslangic').value;
+                    const bitis = document.getElementById('raporBitis').value;
+                    const saticiIds = document.getElementById('saticiIds').value || '';
+                    const baseEndpoint = `/report/get-gunluk-satis?raporBaslangic=${baslangic}&raporBitis=${bitis}&saticild=${saticiIds}`;
+
+                    // İlk sayfayı çek, toplam sayfa sayısını öğren
+                    const firstRes = await fetch(`${PROXY_URL}${baseEndpoint}&pageno=1`, {
+                        headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': hashedConnectionCode }
+                    });
+                    const firstData = await firstRes.json();
+                    const totalPages = firstData.totalPages || 1;
+                    let allItems = firstData.data || [];
+
+                    // Kalan sayfaları çek
+                    for (let p = 2; p <= totalPages; p++) {
+                        btn.textContent = `🔄 Yükleniyor... (${p}/${totalPages})`;
+                        const r = await fetch(`${PROXY_URL}${baseEndpoint}&pageno=${p}`, {
+                            headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': hashedConnectionCode }
+                        });
+                        const d = await r.json();
+                        if (d.data) allItems = allItems.concat(d.data);
+                    }
+
+                    if (allItems.length > 0) {
+                        currentData = { data: allItems, totalPages };
+                        displayData(currentData);
+                        document.getElementById('exportBtn').style.display = 'block';
+                        showAlert('success', `✅ ${allItems.length} kayıt bulundu (${totalPages} sayfa)`);
+                    } else {
+                        showAlert('warning', 'Kayıt bulunamadı');
+                    }
+                    btn.disabled = false;
+                    btn.textContent = '🔍 Raporu Getir';
+                    return;
                 } else if (activeTab === 'bulunurlukV6') {
                     endpoint = `/report/get-bulunurluk-rapor-v6?pageno=${document.getElementById('pageNo').value}&saticiId=${document.getElementById('saticiId').value}&urunKodu=${document.getElementById('urunKodu').value || ''}&teslimNoktasiId=${document.getElementById('teslimNoktasiId').value || ''}`;
                 } else if (activeTab === 'bulunurluk') {
