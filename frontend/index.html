@@ -618,13 +618,15 @@
             container.innerHTML = html;
         }
 
+        function buildRows(arr, fn) { let s = ''; for (let i = 0; i < arr.length; i++) s += fn(arr[i], i); return s; }
+
         function displaySatisDashboard(items) {
             const container = document.getElementById('reportContainer');
             if (!items.length) { container.innerHTML = '<div class="card"><p class="alert alert-warning">Veri bulunamadı</p></div>'; return; }
 
             // SalesList nested yapısını aç
             if (items[0] && items[0].SalesList) {
-                items = items.flatMap(i => i.SalesList || []);
+                items = items.flatMap(function(i) { return i.SalesList || []; });
             }
 
             const fmt    = n => (Math.round(parseFloat(n)||0)).toLocaleString('tr-TR');
@@ -685,135 +687,110 @@
 
             const tipRenk = {'MMM':'#7c3aed','MM':'#2563eb','M':'#059669'};
 
-            let html = `
-            <style>
-                .satis-kpi { border-left-color: #ef4444; }
-                .trend-bar { display:flex; align-items:center; gap:.5rem; margin-bottom:.4rem; }
-                .trend-label { min-width:90px; font-size:.75rem; color:#374151; }
-                .trend-bar-wrap { flex:1; background:#f3f4f6; border-radius:9999px; height:10px; }
-                .trend-bar-fill { height:10px; border-radius:9999px; background:linear-gradient(to right,#f97316,#ef4444); }
-                .trend-val { min-width:80px; text-align:right; font-size:.75rem; font-weight:600; color:#1f2937; }
-            </style>
+            // Mağaza tipi HTML
+            var tiplerHtml = '';
+            Object.entries(tipler).forEach(function(entry) {
+                var tip = entry[0], d = entry[1];
+                var renk = tipRenk[tip] || '#374151';
+                var pct = Math.round(d.tutar / toplamTutar * 100);
+                tiplerHtml += '<div style="margin-bottom:1rem;">';
+                tiplerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:.3rem;">';
+                tiplerHtml += '<span style="font-weight:700;color:' + renk + ';font-size:.9rem;">' + tip + '</span>';
+                tiplerHtml += '<span style="font-size:.85rem;color:#6b7280;">' + fmt(d.adet) + ' adet · ' + fmtTL(d.tutar) + '</span>';
+                tiplerHtml += '</div>';
+                tiplerHtml += '<div class="bar-wrap"><div class="bar-fill" style="width:' + pct + '%;background:' + renk + ';"></div></div>';
+                tiplerHtml += '<div style="font-size:.7rem;color:#9ca3af;margin-top:.2rem;">%' + fmtDec(d.tutar / toplamTutar * 100) + '</div></div>';
+            });
 
-            <div class="kpi-grid">
-                <div class="kpi satis-kpi"><div class="kpi-label">Toplam Satış</div><div class="kpi-value">${fmtTL(toplamTutar)}</div></div>
-                <div class="kpi satis-kpi"><div class="kpi-label">Satılan Adet</div><div class="kpi-value">${fmt(toplamAdet)}</div></div>
-                <div class="kpi satis-kpi"><div class="kpi-label">Mağaza Sayısı</div><div class="kpi-value">${magazaSayisi}</div></div>
-                <div class="kpi satis-kpi"><div class="kpi-label">Ürün Çeşidi</div><div class="kpi-value">${urunCesidi}</div></div>
-                <div class="kpi satis-kpi"><div class="kpi-label">Ort. Satış / Mağaza</div><div class="kpi-value">${fmtTL(toplamTutar / (magazaSayisi||1))}</div></div>
-                <div class="kpi satis-kpi"><div class="kpi-label">Toplam Kayıt</div><div class="kpi-value">${fmt(items.length)}</div></div>
-            </div>
+            // Günlük trend HTML
+            var trendHtml = '';
+            if (gunler.length === 0) {
+                trendHtml = '<p style="color:#9ca3af;">Veri yok</p>';
+            } else {
+                var maxT = 0;
+                gunler.forEach(function(e) { if (e[1].tutar > maxT) maxT = e[1].tutar; });
+                if (!maxT) maxT = 1;
+                gunler.forEach(function(e) {
+                    var gun = e[0], d = e[1];
+                    var pct = Math.round(d.tutar / maxT * 100);
+                    trendHtml += '<div class="trend-bar">';
+                    trendHtml += '<div class="trend-label">' + gun.slice(5) + '</div>';
+                    trendHtml += '<div class="trend-bar-wrap"><div class="trend-bar-fill" style="width:' + pct + '%"></div></div>';
+                    trendHtml += '<div class="trend-val">' + fmtTL(d.tutar) + '</div></div>';
+                });
+            }
 
-            <div class="dash-grid">
-                <div class="card">
-                    <h3 style="margin-bottom:1rem;font-size:1rem;">🏪 Mağaza Tipi Dağılımı</h3>
-                    ${Object.entries(tipler).map(([tip, d]) => `
-                        <div style="margin-bottom:1rem;">
-                            <div style="display:flex;justify-content:space-between;margin-bottom:.3rem;">
-                                <span style="font-weight:700;color:${tipRenk[tip]||'#374151'};font-size:.9rem;">${tip}</span>
-                                <span style="font-size:.85rem;color:#6b7280;">${fmt(d.adet)} adet · ${fmtTL(d.tutar)}</span>
-                            </div>
-                            <div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(d.tutar/toplamTutar*100)}%;background:${tipRenk[tip]||'#f97316'};"></div></div>
-                            <div style="font-size:.7rem;color:#9ca3af;margin-top:.2rem;">%${fmtDec(d.tutar/toplamTutar*100)}</div>
-                        </div>
-                    `).join('')}
-                </div>
+            // Top ürünler HTML
+            var urunlerHtml = '';
+            topUrunler.forEach(function(entry, i) {
+                var ad = entry[0], d = entry[1];
+                var pct = Math.round(d.tutar / maxUrunTutar * 100);
+                var bg = i % 2 === 1 ? 'background:#f9fafb' : '';
+                urunlerHtml += '<tr style="border-bottom:1px solid #f3f4f6;' + bg + '">';
+                urunlerHtml += '<td style="padding:.5rem;color:#9ca3af;font-size:.8rem;">' + (i+1) + '</td>';
+                urunlerHtml += '<td style="padding:.5rem;font-size:.82rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + ad + '">' + ad + '<div class="bar-wrap" style="margin-top:3px;"><div class="bar-fill" style="width:' + pct + '%"></div></div></td>';
+                urunlerHtml += '<td style="padding:.5rem;text-align:right;font-size:.82rem;">' + fmt(d.adet) + '</td>';
+                urunlerHtml += '<td style="padding:.5rem;text-align:right;font-size:.82rem;font-weight:600;">' + fmtTL(d.tutar) + '</td></tr>';
+            });
 
-                <div class="card">
-                    <h3 style="margin-bottom:1rem;font-size:1rem;">📅 Günlük Trend</h3>
-                    ${gunler.length === 0 ? '<p style="color:#9ca3af;">Veri yok</p>' : (() => {
-                        const maxT = Math.max(...gunler.map(([,d])=>d.tutar))||1;
-                        return gunler.map(([gun, d]) => `
-                            <div class="trend-bar">
-                                <div class="trend-label">${gun.slice(5)}</div>
-                                <div class="trend-bar-wrap"><div class="trend-bar-fill" style="width:${Math.round(d.tutar/maxT*100)}%"></div></div>
-                                <div class="trend-val">${fmtTL(d.tutar)}</div>
-                            </div>`).join('');
-                    })()}
-                </div>
-            </div>
+            // Top mağazalar HTML
+            var magazalarHtml = '';
+            topMagazalar.forEach(function(entry, i) {
+                var ad = entry[0], d = entry[1];
+                var renk = tipRenk[d.tip] || '#6b7280';
+                var bg = i % 2 === 1 ? 'background:#f9fafb' : '';
+                magazalarHtml += '<tr style="border-bottom:1px solid #f3f4f6;' + bg + '">';
+                magazalarHtml += '<td style="padding:.5rem;color:#9ca3af;font-size:.8rem;">' + (i+1) + '</td>';
+                magazalarHtml += '<td style="padding:.5rem;font-size:.82rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + ad + '">' + ad + '</td>';
+                magazalarHtml += '<td style="padding:.5rem;text-align:center;"><span class="badge" style="background:' + renk + '20;color:' + renk + '">' + (d.tip||'-') + '</span></td>';
+                magazalarHtml += '<td style="padding:.5rem;text-align:right;font-size:.82rem;font-weight:600;">' + fmtTL(d.tutar) + '</td></tr>';
+            });
 
-            <div class="dash-grid">
-                <div class="card">
-                    <h3 style="margin-bottom:1rem;font-size:1rem;">🏆 En Çok Satan Ürünler (Top 10)</h3>
-                    <table style="width:100%;border-collapse:collapse;">
-                        <thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;">
-                            <th style="padding:.5rem;text-align:left;font-size:.7rem;">#</th>
-                            <th style="padding:.5rem;text-align:left;font-size:.7rem;">Ürün</th>
-                            <th style="padding:.5rem;text-align:right;font-size:.7rem;">Adet</th>
-                            <th style="padding:.5rem;text-align:right;font-size:.7rem;">Tutar</th>
-                        </tr></thead><tbody>
-                        ${topUrunler.map(([ad, d], i) => `
-                            <tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
-                                <td style="padding:.5rem;color:#9ca3af;font-size:.8rem;">${i+1}</td>
-                                <td style="padding:.5rem;font-size:.82rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${ad}">
-                                    ${ad}
-                                    <div class="bar-wrap" style="margin-top:3px;"><div class="bar-fill" style="width:${Math.round(d.tutar/maxUrunTutar*100)}%"></div></div>
-                                </td>
-                                <td style="padding:.5rem;text-align:right;font-size:.82rem;">${fmt(d.adet)}</td>
-                                <td style="padding:.5rem;text-align:right;font-size:.82rem;font-weight:600;">${fmtTL(d.tutar)}</td>
-                            </tr>`).join('')}
-                        </tbody>
-                    </table>
-                </div>
+            var html = '<style>.satis-kpi{border-left-color:#ef4444}.trend-bar{display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem}.trend-label{min-width:90px;font-size:.75rem;color:#374151}.trend-bar-wrap{flex:1;background:#f3f4f6;border-radius:9999px;height:10px}.trend-bar-fill{height:10px;border-radius:9999px;background:linear-gradient(to right,#f97316,#ef4444)}.trend-val{min-width:80px;text-align:right;font-size:.75rem;font-weight:600;color:#1f2937}</style>';
 
-                <div class="card">
-                    <h3 style="margin-bottom:1rem;font-size:1rem;">🏬 En Çok Satan Mağazalar (Top 10)</h3>
-                    <table style="width:100%;border-collapse:collapse;">
-                        <thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;">
-                            <th style="padding:.5rem;text-align:left;font-size:.7rem;">#</th>
-                            <th style="padding:.5rem;text-align:left;font-size:.7rem;">Mağaza</th>
-                            <th style="padding:.5rem;text-align:center;font-size:.7rem;">Tip</th>
-                            <th style="padding:.5rem;text-align:right;font-size:.7rem;">Tutar</th>
-                        </tr></thead><tbody>
-                        ${topMagazalar.map(([ad, d], i) => `
-                            <tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
-                                <td style="padding:.5rem;color:#9ca3af;font-size:.8rem;">${i+1}</td>
-                                <td style="padding:.5rem;font-size:.82rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${ad}">${ad}</td>
-                                <td style="padding:.5rem;text-align:center;"><span class="badge" style="background:${tipRenk[d.tip]||'#6b7280'}20;color:${tipRenk[d.tip]||'#6b7280'}">${d.tip||'-'}</span></td>
-                                <td style="padding:.5rem;text-align:right;font-size:.82rem;font-weight:600;">${fmtTL(d.tutar)}</td>
-                            </tr>`).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+            html += '<div class="kpi-grid">';
+            html += '<div class="kpi satis-kpi"><div class="kpi-label">Toplam Satış</div><div class="kpi-value">' + fmtTL(toplamTutar) + '</div></div>';
+            html += '<div class="kpi satis-kpi"><div class="kpi-label">Satılan Adet</div><div class="kpi-value">' + fmt(toplamAdet) + '</div></div>';
+            html += '<div class="kpi satis-kpi"><div class="kpi-label">Mağaza Sayısı</div><div class="kpi-value">' + magazaSayisi + '</div></div>';
+            html += '<div class="kpi satis-kpi"><div class="kpi-label">Ürün Çeşidi</div><div class="kpi-value">' + urunCesidi + '</div></div>';
+            html += '<div class="kpi satis-kpi"><div class="kpi-label">Ort. Satış / Mağaza</div><div class="kpi-value">' + fmtTL(toplamTutar / (magazaSayisi||1)) + '</div></div>';
+            html += '<div class="kpi satis-kpi"><div class="kpi-label">Toplam Kayıt</div><div class="kpi-value">' + fmt(items.length) + '</div></div>';
+            html += '</div>';
 
-            <div class="card">
-                <h3 style="margin-bottom:1rem;font-size:1rem;">📋 Detaylı İşlem Tablosu</h3>
-                <div class="table-container">
-                <table style="width:100%;border-collapse:collapse;font-size:.82rem;">
-                    <thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;">
-                        <th style="padding:.5rem;">Tarih</th>
-                        <th style="padding:.5rem;">Ürün</th>
-                        <th style="padding:.5rem;">Mağaza</th>
-                        <th style="padding:.5rem;text-align:center;">Tip</th>
-                        <th style="padding:.5rem;text-align:right;">Adet</th>
-                        <th style="padding:.5rem;text-align:right;">Net Satış</th>
-                        <th style="padding:.5rem;text-align:right;">Kümülatif Oran</th>
-                    </tr></thead><tbody>
-                    ${items.slice(0,200).map((r,i) => {
-                        const tarih = (g(r,'DateTransaction','DATETRANSACTION')||'').split('T')[0].split(' ')[0];
-                        const urunAd = g(r,'SupplierItemName','SUPPLIERITEMNAME')||'-';
-                        const magAd  = g(r,'StoreName','STORENAME')||'-';
-                        const tip    = storeTypeMap[g(r,'StoreType','STORETYPE')] || g(r,'StoreType','STORETYPE') || '-';
-                        const adet   = g(r,'QuantitySold','QUANTITYSOLD')||0;
-                        const tutar  = g(r,'NetSalesValue','NETSALESVALUE')||0;
-                        const kumOran= g(r,'KumuleNetSatisOrani','KUMULENETSATISORANI')||0;
-                        return `<tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
-                            <td style="padding:.5rem;color:#6b7280;">${tarih||'-'}</td>
-                            <td style="padding:.5rem;font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${urunAd}">${urunAd}</td>
-                            <td style="padding:.5rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${magAd}">${magAd}</td>
-                            <td style="padding:.5rem;text-align:center;"><span class="badge" style="background:${tipRenk[tip]||'#6b7280'}20;color:${tipRenk[tip]||'#6b7280'}">${tip}</span></td>
-                            <td style="padding:.5rem;text-align:right;">${fmt(adet)}</td>
-                            <td style="padding:.5rem;text-align:right;font-weight:600;">${fmtTL(tutar)}</td>
-                            <td style="padding:.5rem;text-align:right;color:#6b7280;">%${fmtDec(kumOran)}</td>
-                        </tr>`;
-                    }).join('')}
-                    </tbody>
-                </table>
-                </div>
-                ${items.length>200?`<div style="padding:1rem;text-align:center;color:#6b7280;font-size:.85rem;">İlk 200 kayıt gösteriliyor. CSV'ye aktararak tümünü görebilirsiniz.</div>`:''}
-            </div>`;
+            html += '<div class="dash-grid">';
+            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">🏪 Mağaza Tipi Dağılımı</h3>' + tiplerHtml + '</div>';
+            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">📅 Günlük Trend</h3>' + trendHtml + '</div>';
+            html += '</div>';
+
+            html += '<div class="dash-grid">';
+            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">🏆 En Çok Satan Ürünler (Top 10)</h3><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;"><th style="padding:.5rem;text-align:left;font-size:.7rem;">#</th><th style="padding:.5rem;text-align:left;font-size:.7rem;">Ürün</th><th style="padding:.5rem;text-align:right;font-size:.7rem;">Adet</th><th style="padding:.5rem;text-align:right;font-size:.7rem;">Tutar</th></tr></thead><tbody>' + urunlerHtml + '</tbody></table></div>';
+            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">🏬 En Çok Satan Mağazalar (Top 10)</h3><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;"><th style="padding:.5rem;text-align:left;font-size:.7rem;">#</th><th style="padding:.5rem;text-align:left;font-size:.7rem;">Mağaza</th><th style="padding:.5rem;text-align:center;font-size:.7rem;">Tip</th><th style="padding:.5rem;text-align:right;font-size:.7rem;">Tutar</th></tr></thead><tbody>' + magazalarHtml + '</tbody></table></div>';
+            html += '</div>';
+
+            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">📋 Detaylı İşlem Tablosu</h3><div class="table-container"><table style="width:100%;border-collapse:collapse;font-size:.82rem;"><thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;"><th style="padding:.5rem;">Tarih</th><th style="padding:.5rem;">Ürün</th><th style="padding:.5rem;">Mağaza</th><th style="padding:.5rem;text-align:center;">Tip</th><th style="padding:.5rem;text-align:right;">Adet</th><th style="padding:.5rem;text-align:right;">Net Satış</th><th style="padding:.5rem;text-align:right;">Kümülatif Oran</th></tr></thead><tbody>';
+            var detayLimit = items.slice(0, 200);
+            detayLimit.forEach(function(r, i) {
+                var tarih   = (g(r,'DateTransaction','DATETRANSACTION')||'').split('T')[0].split(' ')[0] || '-';
+                var urunAd  = g(r,'SupplierItemName','SUPPLIERITEMNAME') || '-';
+                var magAd   = g(r,'StoreName','STORENAME') || '-';
+                var tip     = storeTypeMap[g(r,'StoreType','STORETYPE')] || g(r,'StoreType','STORETYPE') || '-';
+                var adet    = g(r,'QuantitySold','QUANTITYSOLD') || 0;
+                var tutar   = g(r,'NetSalesValue','NETSALESVALUE') || 0;
+                var kumOran = g(r,'KumuleNetSatisOrani','KUMULENETSATISORANI') || 0;
+                var renk    = tipRenk[tip] || '#6b7280';
+                var bg      = i % 2 === 1 ? 'background:#f9fafb' : '';
+                html += '<tr style="border-bottom:1px solid #f3f4f6;' + bg + '">';
+                html += '<td style="padding:.5rem;color:#6b7280;">' + tarih + '</td>';
+                html += '<td style="padding:.5rem;font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + urunAd + '">' + urunAd + '</td>';
+                html += '<td style="padding:.5rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + magAd + '">' + magAd + '</td>';
+                html += '<td style="padding:.5rem;text-align:center;"><span class="badge" style="background:' + renk + '20;color:' + renk + '">' + tip + '</span></td>';
+                html += '<td style="padding:.5rem;text-align:right;">' + fmt(adet) + '</td>';
+                html += '<td style="padding:.5rem;text-align:right;font-weight:600;">' + fmtTL(tutar) + '</td>';
+                html += '<td style="padding:.5rem;text-align:right;color:#6b7280;">%' + fmtDec(kumOran) + '</td></tr>';
+            });
+            html += '</tbody></table></div>';
+            if (items.length > 200) html += '<div style="padding:1rem;text-align:center;color:#6b7280;font-size:.85rem;">İlk 200 kayıt gösteriliyor. CSV\'ye aktararak tümünü görebilirsiniz.</div>';
+            html += '</div>';
 
             container.innerHTML = html;
         }
