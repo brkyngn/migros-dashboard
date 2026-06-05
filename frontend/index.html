@@ -236,7 +236,8 @@
             } else if (activeTab === 'gunlukSatis') {
                 const bugun = new Date().toISOString().split('T')[0];
                 html = `
-                    <div class="form-group"><label>Tarih (yyyy-mm-dd)</label><input type="date" id="raporBaslangic" value="${bugun}"></div>
+                    <div class="form-group"><label>Başlangıç (yyyy-mm-dd)</label><input type="date" id="raporBaslangic" value="${bugun}"></div>
+                    <div class="form-group"><label>Bitiş (yyyy-mm-dd)</label><input type="date" id="raporBitis" value="${bugun}"></div>
                     <div class="form-group"><label>Satıcı IDs</label><input type="text" id="saticiIds" value="39286"></div>
                 `;
             } else if (activeTab === 'bulunurlukV6') {
@@ -334,7 +335,7 @@
                     endpoint = `/report/get-eticaret-rapor?pageno=${document.getElementById('pageNo').value}&raporBaslangic=${document.getElementById('raporBaslangic').value}&raporBitis=${document.getElementById('raporBitis').value}&saticiId=${document.getElementById('saticiid').value || ''}&urunKodu=${document.getElementById('urunKodu').value || ''}&barkod=${document.getElementById('barkod').value || ''}`;
                 } else if (activeTab === 'gunlukSatis') {
                     const baslangic = new Date(document.getElementById('raporBaslangic').value);
-                    const bitis = baslangic;
+                    const bitis = new Date(document.getElementById('raporBitis').value);
                     const saticiIds = document.getElementById('saticiIds').value || '';
                     let allItems = [];
                     let lastResponse = null;
