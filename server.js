@@ -11,7 +11,12 @@ const app = express();
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../frontend')));
+app.use(express.static(path.join(__dirname, 'frontend')));
+
+// Ana sayfa
+app.get('/', (req, res) => {
+  res.redirect('/api/health');
+});
 
 // Konfigürasyon
 const CONFIG = {
