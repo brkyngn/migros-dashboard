@@ -362,7 +362,8 @@
                         document.getElementById('exportBtn').style.display = 'block';
                         showAlert('success', `✅ ${allItems.length} kayıt bulundu (${totalPages} sayfa)`);
                     } else {
-                        showAlert('warning', 'Kayıt bulunamadı');
+                        const errMsg = firstData.message || firstData.error || JSON.stringify(firstData);
+                        showAlert('warning', `Kayıt bulunamadı. API cevabı: ${errMsg}`);
                     }
                     btn.disabled = false;
                     btn.textContent = '🔍 Raporu Getir';
