@@ -249,16 +249,15 @@ function saveToDatabase(tableName, data) {
 // ========== MİGROS API PROXY ==========
 
 // Migros API'ye istek ilet (frontend'den gelen token ile)
-function proxyToMigros(path, method, headers, body, res) {
+function proxyToMigros(reqPath, method, headers, body, res) {
+  let sent = false;
+
   const options = {
     hostname: 'api-prod.migros.com.tr',
     port: 443,
-    path: `/rest/b2b/api/v1${path}`,
+    path: `/rest/b2b/api/v1${reqPath}`,
     method: method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers
-    },
+    headers: { 'Content-Type': 'application/json', ...headers },
     timeout: 120000
   };
 
@@ -266,6 +265,8 @@ function proxyToMigros(path, method, headers, body, res) {
     let data = '';
     apiRes.on('data', chunk => data += chunk);
     apiRes.on('end', () => {
+      if (sent) return;
+      sent = true;
       try {
         res.json(JSON.parse(data));
       } catch (e) {
@@ -274,8 +275,18 @@ function proxyToMigros(path, method, headers, body, res) {
     });
   });
 
-  req.on('error', (err) => res.status(500).json({ error: err.message }));
-  req.on('timeout', () => res.status(504).json({ error: 'Timeout' }));
+  req.on('error', (err) => {
+    if (sent) return;
+    sent = true;
+    res.status(500).json({ error: err.message });
+  });
+
+  req.on('timeout', () => {
+    if (sent) return;
+    sent = true;
+    req.destroy();
+    res.status(504).json({ error: 'Timeout' });
+  });
 
   if (body) req.write(body);
   req.end();
