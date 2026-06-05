@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Migros B2B Rapor Yönetimi</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
     <style>
         * {
             margin: 0;
@@ -469,7 +471,16 @@
             container.innerHTML = html;
         }
 
+        var _stokChart = null, _satisChart1 = null, _satisChart2 = null, _satisChart3 = null;
+        function destroyCharts() {
+            if (_stokChart) { _stokChart.destroy(); _stokChart = null; }
+            if (_satisChart1) { _satisChart1.destroy(); _satisChart1 = null; }
+            if (_satisChart2) { _satisChart2.destroy(); _satisChart2 = null; }
+            if (_satisChart3) { _satisChart3.destroy(); _satisChart3 = null; }
+        }
+
         function displayStokDashboard(items) {
+            destroyCharts();
             const container = document.getElementById('reportContainer');
             if (!items.length) { container.innerHTML = '<div class="card"><p class="alert alert-warning">Veri bulunamadı</p></div>'; return; }
 
@@ -505,294 +516,517 @@
             });
             const urunler = Object.entries(urunMap).sort((a,b) => b[1].stok - a[1].stok);
 
-            const fmt = n => Math.round(n).toLocaleString('tr-TR');
-            const fmtTL = n => Math.round(n).toLocaleString('tr-TR') + ' ₺';
+            var fmt   = function(n) { return Math.round(parseFloat(n)||0).toLocaleString('tr-TR'); };
+            var fmtTL = function(n) { return Math.round(parseFloat(n)||0).toLocaleString('tr-TR') + ' ₺'; };
 
-            let html = `
-            <style>
-                .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-                .kpi { background: white; border-radius: .75rem; padding: 1.25rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,.1); border-left: 4px solid #f97316; }
-                .kpi-label { font-size: .75rem; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
-                .kpi-value { font-size: 1.75rem; font-weight: 700; color: #1f2937; margin-top: .25rem; }
-                .kpi-sub { font-size: .75rem; color: #9ca3af; margin-top: .125rem; }
-                .dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
-                @media(max-width:768px){ .dash-grid { grid-template-columns: 1fr; } }
-                .stok-table th { font-size: .7rem; }
-                .stok-table td { font-size: .82rem; }
-                .badge { display: inline-block; padding: .2rem .6rem; border-radius: 9999px; font-size: .7rem; font-weight: 600; }
-                .badge-green { background: #d1fae5; color: #065f46; }
-                .badge-red   { background: #fee2e2; color: #991b1b; }
-                .badge-gray  { background: #f3f4f6; color: #374151; }
-                .bar-wrap { background: #f3f4f6; border-radius: 9999px; height: 8px; margin-top: 4px; }
-                .bar-fill { background: linear-gradient(to right,#f97316,#ef4444); border-radius: 9999px; height: 8px; }
-            </style>
-
-            <div class="kpi-grid">
-                <div class="kpi"><div class="kpi-label">Toplam Stok</div><div class="kpi-value">${fmt(toplamStok)}</div><div class="kpi-sub">adet</div></div>
-                <div class="kpi"><div class="kpi-label">Stok Tutarı</div><div class="kpi-value">${fmtTL(toplamTutar)}</div></div>
-                <div class="kpi"><div class="kpi-label">Günlük Satış</div><div class="kpi-value">${fmt(gunlukSatis)}</div><div class="kpi-sub">${fmtTL(gunlukTutar)}</div></div>
-                <div class="kpi"><div class="kpi-label">Günlük Yükleme</div><div class="kpi-value">${fmt(gunlukYukleme)}</div><div class="kpi-sub">adet</div></div>
-                <div class="kpi"><div class="kpi-label">Ort. Stok Günü</div><div class="kpi-value">${ortStokGun}</div><div class="kpi-sub">gün</div></div>
-                <div class="kpi"><div class="kpi-label">Toplam Kayıt</div><div class="kpi-value">${fmt(items.length)}</div><div class="kpi-sub">dağıtım noktası</div></div>
-            </div>
-
-            <div class="dash-grid">
-                <div class="card">
-                    <h3 style="margin-bottom:1rem;font-size:1rem;">📍 İl Bazında Stok (Top 10)</h3>
-                    <table class="stok-table" style="width:100%;border-collapse:collapse;">
-                        <thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;">
-                            <th style="padding:.5rem;text-align:left;">İl</th>
-                            <th style="padding:.5rem;text-align:right;">Stok</th>
-                            <th style="padding:.5rem;text-align:right;">Günlük Satış</th>
-                        </tr></thead><tbody>
-                        ${iller.map(([il, d], i) => `
-                        <tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
-                            <td style="padding:.5rem .5rem;">${il}</td>
-                            <td style="padding:.5rem;text-align:right;font-weight:600;">${fmt(d.stok)}</td>
-                            <td style="padding:.5rem;text-align:right;color:#f97316;">${fmt(d.satis)}</td>
-                        </tr>`).join('')}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="card">
-                    <h3 style="margin-bottom:1rem;font-size:1rem;">📦 Ürün Bazında Stok</h3>
-                    <div style="overflow-y:auto;max-height:400px;">
-                    <table class="stok-table" style="width:100%;border-collapse:collapse;">
-                        <thead style="position:sticky;top:0;"><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;">
-                            <th style="padding:.5rem;text-align:left;">Ürün</th>
-                            <th style="padding:.5rem;text-align:right;">Stok</th>
-                            <th style="padding:.5rem;text-align:right;">Satış</th>
-                            <th style="padding:.5rem;text-align:right;">Stok Gün</th>
-                        </tr></thead><tbody>
-                        ${urunler.map(([ad, d], i) => {
-                            const sg = d.count ? Math.round(d.stokGun/d.count) : 0;
-                            const badge = sg === 0 ? 'badge-gray' : sg < 7 ? 'badge-red' : 'badge-green';
-                            return `<tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
-                                <td style="padding:.5rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${ad}">${ad}</td>
-                                <td style="padding:.5rem;text-align:right;font-weight:600;">${fmt(d.stok)}</td>
-                                <td style="padding:.5rem;text-align:right;color:#f97316;">${fmt(d.satis)}</td>
-                                <td style="padding:.5rem;text-align:right;"><span class="badge ${badge}">${sg > 0 ? sg + ' gün' : '-'}</span></td>
-                            </tr>`;
-                        }).join('')}
-                        </tbody>
-                    </table>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3 style="margin-bottom:1rem;font-size:1rem;">📋 Detaylı Tablo</h3>
-                <div class="table-container">
-                <table class="stok-table" style="width:100%;border-collapse:collapse;">
-                    <thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;">
-                        <th style="padding:.5rem;">Ürün Adı</th>
-                        <th style="padding:.5rem;">Teslim Noktası</th>
-                        <th style="padding:.5rem;">İl</th>
-                        <th style="padding:.5rem;text-align:right;">Stok Miktarı</th>
-                        <th style="padding:.5rem;text-align:right;">Stok Tutarı</th>
-                        <th style="padding:.5rem;text-align:right;">Günlük Satış</th>
-                        <th style="padding:.5rem;text-align:right;">Günlük Yükleme</th>
-                        <th style="padding:.5rem;text-align:right;">Stok Gün</th>
-                    </tr></thead><tbody>
-                    ${items.slice(0, 200).map((r, i) => {
-                        const sg = parseFloat(r.STOK_GUN) || 0;
-                        const badge = sg === 0 ? 'badge-gray' : sg < 7 ? 'badge-red' : 'badge-green';
-                        return `<tr style="border-bottom:1px solid #f3f4f6;${i%2===1?'background:#f9fafb':''}">
-                            <td style="padding:.5rem;font-weight:500;">${r.URUN_SATICI_ADI||'-'}</td>
-                            <td style="padding:.5rem;font-size:.75rem;color:#6b7280;">${r.TESLIM_NOKTASI_ACIKLAMA||'-'}</td>
-                            <td style="padding:.5rem;">${r.IL_ADI||'-'}</td>
-                            <td style="padding:.5rem;text-align:right;font-weight:600;">${fmt(r.STOK_MIKTARI||0)}</td>
-                            <td style="padding:.5rem;text-align:right;">${fmtTL(r.STOK_TUTARI||0)}</td>
-                            <td style="padding:.5rem;text-align:right;color:#f97316;">${fmt(r.GUNLUK_SATIS_MIKTARI||0)}</td>
-                            <td style="padding:.5rem;text-align:right;color:#10b981;">${fmt(r.GUNLUK_YUKLEME_MIKTARI||0)}</td>
-                            <td style="padding:.5rem;text-align:right;"><span class="badge ${badge}">${sg>0?sg+' gün':'-'}</span></td>
-                        </tr>`;
-                    }).join('')}
-                    </tbody>
-                </table>
-                </div>
-                ${items.length > 200 ? `<div style="padding:1rem;text-align:center;color:#6b7280;font-size:.85rem;">İlk 200 kayıt gösteriliyor. CSV'ye aktararak tümünü görebilirsiniz.</div>` : ''}
-            </div>`;
-
-            container.innerHTML = html;
-        }
-
-        function buildRows(arr, fn) { let s = ''; for (let i = 0; i < arr.length; i++) s += fn(arr[i], i); return s; }
-
-        function displaySatisDashboard(items) {
-            const container = document.getElementById('reportContainer');
-            if (!items.length) { container.innerHTML = '<div class="card"><p class="alert alert-warning">Veri bulunamadı</p></div>'; return; }
-
-            // SalesList nested yapısını aç
-            if (items[0] && items[0].SalesList) {
-                items = items.flatMap(function(i) { return i.SalesList || []; });
-            }
-
-            const fmt    = n => (Math.round(parseFloat(n)||0)).toLocaleString('tr-TR');
-            const fmtTL  = n => (Math.round(parseFloat(n)||0)).toLocaleString('tr-TR') + ' ₺';
-            const fmtDec = n => (parseFloat(n)||0).toLocaleString('tr-TR', {minimumFractionDigits:2, maximumFractionDigits:2});
-
-            // KPI
-            // Alan adlarını normalize et (API camelCase veya UPPERCASE dönebilir)
-            const g = (r, ...keys) => { for (const k of keys) { if (r[k] !== undefined && r[k] !== null) return r[k]; } return null; };
-
-            const toplamTutar  = items.reduce((s,r) => s + (parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0), 0);
-            const toplamAdet   = items.reduce((s,r) => s + (parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0), 0);
-            const magazaSayisi = new Set(items.map(r => g(r,'StoreNumber','STORENUMBER'))).size;
-            const urunCesidi   = new Set(items.map(r => g(r,'SupplierItemNumber','SUPPLIERITEMNUMBER'))).size;
-
-            // Mağaza tipi
-            const storeTypeMap = {'1':'MMM','2':'MM','3':'M'};
-            const tipler = {};
-            items.forEach(r => {
-                const t = storeTypeMap[g(r,'StoreType','STORETYPE')] || g(r,'StoreType','STORETYPE') || '?';
-                if (!tipler[t]) tipler[t] = { adet: 0, tutar: 0 };
-                tipler[t].adet  += parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0;
-                tipler[t].tutar += parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0;
+            // Stok durumu sınıflandırma
+            var sifir=0, kritik=0, uyari=0, normal=0, yuksek=0, asiri=0;
+            items.forEach(function(r) {
+                var sg = parseFloat(r.STOK_GUN)||0;
+                var sm = parseFloat(r.STOK_MIKTARI)||0;
+                if (sm===0) sifir++;
+                else if (sg>0 && sg<7) kritik++;
+                else if (sg>=7 && sg<14) uyari++;
+                else if (sg>=14 && sg<30) normal++;
+                else if (sg>=30 && sg<60) yuksek++;
+                else if (sg>=60) asiri++;
             });
 
-            // Günlük trend
-            const gunMap = {};
-            items.forEach(r => {
-                const gun = (g(r,'DateTransaction','DATETRANSACTION')||'').split(' ')[0].split('T')[0];
-                if (!gun) return;
-                if (!gunMap[gun]) gunMap[gun] = { adet: 0, tutar: 0 };
-                gunMap[gun].adet  += parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0;
-                gunMap[gun].tutar += parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0;
-            });
-            const gunler = Object.entries(gunMap).sort((a,b) => a[0].localeCompare(b[0]));
+            var stokDevir = gunlukSatis > 0 ? (toplamStok / gunlukSatis).toFixed(1) : '—';
 
-            // Top ürünler
-            const urunMap = {};
-            items.forEach(r => {
-                const ad = g(r,'SupplierItemName','SUPPLIERITEMNAME') || g(r,'SupplierItemNumber','SUPPLIERITEMNUMBER') || '-';
-                if (!urunMap[ad]) urunMap[ad] = { adet: 0, tutar: 0 };
-                urunMap[ad].adet  += parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0;
-                urunMap[ad].tutar += parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0;
-            });
-            const topUrunler = Object.entries(urunMap).sort((a,b) => b[1].tutar - a[1].tutar).slice(0,10);
-            const maxUrunTutar = topUrunler[0]?.[1]?.tutar || 1;
+            var html = '';
+            html += '<style>';
+            html += '@import url("https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@300;400;500;600&display=swap");';
+            html += '.sd-wrap{font-family:"Inter",sans-serif;background:#f5f2ec;padding:0;margin:-1rem}';
+            html += '.sd-header{background:#0d0d0d;color:#fff;padding:40px 48px 36px;position:relative;overflow:hidden}';
+            html += '.sd-bg-word{position:absolute;right:-20px;bottom:-10px;font-family:"Syne",sans-serif;font-size:120px;font-weight:800;color:rgba(255,255,255,.04);letter-spacing:-.04em;line-height:1;pointer-events:none}';
+            html += '.sd-eyebrow{font-size:11px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.4);margin-bottom:14px}';
+            html += '.sd-title{font-family:"Syne",sans-serif;font-size:36px;font-weight:800;line-height:1.05;margin-bottom:8px}';
+            html += '.sd-title em{color:#f0a070;font-style:normal}';
+            html += '.sd-sub{font-size:13px;color:rgba(255,255,255,.45);margin-top:8px}';
+            html += '.sd-sub b{color:rgba(255,255,255,.75)}';
+            html += '.sd-kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:rgba(255,255,255,.1);margin-top:28px;border-radius:8px;overflow:hidden}';
+            html += '.sd-kpi-cell{background:#1a1a1a;padding:16px 18px}';
+            html += '.sd-kpi-label{font-size:10px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:5px}';
+            html += '.sd-kpi-val{font-family:"Syne",sans-serif;font-size:20px;font-weight:700;color:#fff;line-height:1}';
+            html += '.sd-kpi-sub{font-size:10px;color:rgba(255,255,255,.35);margin-top:3px}';
+            html += '.sd-content{padding:36px 48px;max-width:1300px}';
+            html += '.sd-section{font-family:"Syne",sans-serif;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#8a8a8a;margin-bottom:18px;display:flex;align-items:center;gap:12px}';
+            html += '.sd-section::after{content:"";flex:1;height:1px;background:#e8e3d9}';
+            html += '.sd-status-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:32px}';
+            html += '.sd-scard{border-radius:10px;padding:16px 18px;border:1px solid}';
+            html += '.sd-scard-label{font-size:11px;font-weight:500;margin-bottom:5px}';
+            html += '.sd-scard-num{font-family:"Syne",sans-serif;font-size:28px;font-weight:700;line-height:1;margin-bottom:3px}';
+            html += '.sd-scard-sub{font-size:10px;color:#8a8a8a}';
+            html += '.sd-g2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:32px}';
+            html += '.sd-card{background:#fff;border:1px solid #e8e3d9;border-radius:14px;padding:24px}';
+            html += '.sd-card-title{font-size:12px;font-weight:600;color:#8a8a8a;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}';
+            html += '.sd-card-sub{font-size:11px;color:#8a8a8a;margin-bottom:18px}';
+            html += '.sd-table{width:100%;border-collapse:collapse}';
+            html += '.sd-table th{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#8a8a8a;padding:8px 14px;text-align:left;background:#faf8f4;border-bottom:1px solid #e8e3d9}';
+            html += '.sd-table td{padding:9px 14px;border-bottom:1px solid #e8e3d9;font-size:12px;vertical-align:middle}';
+            html += '.sd-table tr:last-child td{border-bottom:none}';
+            html += '.sd-table tr:hover td{background:#faf8f4}';
+            html += '.sd-num{text-align:right;font-variant-numeric:tabular-nums}';
+            html += '.sd-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600}';
+            html += '.sdb-sifir{background:#fef2f2;color:#9b2335;border:1px solid #fecaca}';
+            html += '.sdb-kritik{background:#fffbeb;color:#b45309;border:1px solid #fde68a}';
+            html += '.sdb-uyari{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}';
+            html += '.sdb-normal{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}';
+            html += '.sdb-yuksek{background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe}';
+            html += '.sdb-asiri{background:#fdf4ff;color:#86198f;border:1px solid #f0abfc}';
+            html += '.sd-bar{height:4px;background:#f0ede6;border-radius:2px;margin-top:4px}';
+            html += '.sd-bar-fill{height:100%;border-radius:2px}';
+            html += '.sd-meter{height:8px;background:#e8e3d9;border-radius:4px;overflow:hidden;margin-top:5px}';
+            html += '.sd-meter-fill{height:100%;border-radius:4px;transition:width .5s}';
+            html += '</style>';
 
-            // Top mağazalar
-            const magMap = {};
-            items.forEach(r => {
-                const ad = g(r,'StoreName','STORENAME') || g(r,'StoreNumber','STORENUMBER') || '-';
-                const tip = storeTypeMap[g(r,'StoreType','STORETYPE')] || g(r,'StoreType','STORETYPE');
-                if (!magMap[ad]) magMap[ad] = { adet: 0, tutar: 0, tip };
-                magMap[ad].adet  += parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0;
-                magMap[ad].tutar += parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0;
-            });
-            const topMagazalar = Object.entries(magMap).sort((a,b) => b[1].tutar - a[1].tutar).slice(0,10);
+            html += '<div class="sd-wrap">';
 
-            const tipRenk = {'MMM':'#7c3aed','MM':'#2563eb','M':'#059669'};
+            // Header
+            html += '<div class="sd-header">';
+            html += '<div class="sd-bg-word">STOK</div>';
+            html += '<div class="sd-eyebrow">BT Pet Ürünleri Ltd. Şti. · KittyCady Marka</div>';
+            html += '<div class="sd-title">Stok Durumu &amp;<br><em>Verimlilik Analizi</em></div>';
+            html += '<div class="sd-sub">Toplam <b>' + fmt(items.length) + '</b> lokasyon &nbsp;·&nbsp; Stok tutarı: <b>' + fmtTL(toplamTutar) + '</b></div>';
+            html += '<div class="sd-kpi-row">';
+            html += '<div class="sd-kpi-cell"><div class="sd-kpi-label">Toplam Stok</div><div class="sd-kpi-val">' + fmt(toplamStok) + '</div><div class="sd-kpi-sub">adet</div></div>';
+            html += '<div class="sd-kpi-cell"><div class="sd-kpi-label">Stok Tutarı</div><div class="sd-kpi-val">' + fmtTL(toplamTutar) + '</div></div>';
+            html += '<div class="sd-kpi-cell"><div class="sd-kpi-label">Günlük Satış</div><div class="sd-kpi-val">' + fmt(gunlukSatis) + '</div><div class="sd-kpi-sub">' + fmtTL(gunlukTutar) + '</div></div>';
+            html += '<div class="sd-kpi-cell"><div class="sd-kpi-label">Günlük Yükleme</div><div class="sd-kpi-val">' + fmt(gunlukYukleme) + '</div><div class="sd-kpi-sub">adet</div></div>';
+            html += '<div class="sd-kpi-cell"><div class="sd-kpi-label">Ort. Stok Günü</div><div class="sd-kpi-val">' + ortStokGun + '</div><div class="sd-kpi-sub">gün · devir ' + stokDevir + ' gün</div></div>';
+            html += '</div></div>';
 
-            // Mağaza tipi HTML
-            var tiplerHtml = '';
-            Object.entries(tipler).forEach(function(entry) {
-                var tip = entry[0], d = entry[1];
-                var renk = tipRenk[tip] || '#374151';
-                var pct = Math.round(d.tutar / toplamTutar * 100);
-                tiplerHtml += '<div style="margin-bottom:1rem;">';
-                tiplerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:.3rem;">';
-                tiplerHtml += '<span style="font-weight:700;color:' + renk + ';font-size:.9rem;">' + tip + '</span>';
-                tiplerHtml += '<span style="font-size:.85rem;color:#6b7280;">' + fmt(d.adet) + ' adet · ' + fmtTL(d.tutar) + '</span>';
-                tiplerHtml += '</div>';
-                tiplerHtml += '<div class="bar-wrap"><div class="bar-fill" style="width:' + pct + '%;background:' + renk + ';"></div></div>';
-                tiplerHtml += '<div style="font-size:.7rem;color:#9ca3af;margin-top:.2rem;">%' + fmtDec(d.tutar / toplamTutar * 100) + '</div></div>';
-            });
+            // Content
+            html += '<div class="sd-content">';
 
-            // Günlük trend HTML
-            var trendHtml = '';
-            if (gunler.length === 0) {
-                trendHtml = '<p style="color:#9ca3af;">Veri yok</p>';
-            } else {
-                var maxT = 0;
-                gunler.forEach(function(e) { if (e[1].tutar > maxT) maxT = e[1].tutar; });
-                if (!maxT) maxT = 1;
-                gunler.forEach(function(e) {
-                    var gun = e[0], d = e[1];
-                    var pct = Math.round(d.tutar / maxT * 100);
-                    trendHtml += '<div class="trend-bar">';
-                    trendHtml += '<div class="trend-label">' + gun.slice(5) + '</div>';
-                    trendHtml += '<div class="trend-bar-wrap"><div class="trend-bar-fill" style="width:' + pct + '%"></div></div>';
-                    trendHtml += '<div class="trend-val">' + fmtTL(d.tutar) + '</div></div>';
-                });
-            }
+            // Durum özeti
+            html += '<div class="sd-section">Stok Durum Özeti</div>';
+            html += '<div class="sd-status-grid">';
+            html += '<div class="sd-scard" style="background:#fef2f2;border-color:#fecaca"><div class="sd-scard-label" style="color:#9b2335">⛔ Sıfır Stok</div><div class="sd-scard-num" style="color:#9b2335">' + sifir + '</div><div class="sd-scard-sub">lokasyon</div></div>';
+            html += '<div class="sd-scard" style="background:#fffbeb;border-color:#fde68a"><div class="sd-scard-label" style="color:#b45309">⚠️ Kritik &lt;7 gün</div><div class="sd-scard-num" style="color:#b45309">' + kritik + '</div><div class="sd-scard-sub">lokasyon</div></div>';
+            html += '<div class="sd-scard" style="background:#eff6ff;border-color:#bfdbfe"><div class="sd-scard-label" style="color:#1d4ed8">🔵 Uyarı 7-14 gün</div><div class="sd-scard-num" style="color:#1d4ed8">' + uyari + '</div><div class="sd-scard-sub">lokasyon</div></div>';
+            html += '<div class="sd-scard" style="background:#f0fdf4;border-color:#bbf7d0"><div class="sd-scard-label" style="color:#15803d">✅ Normal 14-30 gün</div><div class="sd-scard-num" style="color:#15803d">' + normal + '</div><div class="sd-scard-sub">lokasyon</div></div>';
+            html += '<div class="sd-scard" style="background:#f5f3ff;border-color:#ddd6fe"><div class="sd-scard-label" style="color:#6d28d9">📦 Yüksek 30-60 gün</div><div class="sd-scard-num" style="color:#6d28d9">' + yuksek + '</div><div class="sd-scard-sub">lokasyon</div></div>';
+            html += '<div class="sd-scard" style="background:#fdf4ff;border-color:#f0abfc"><div class="sd-scard-label" style="color:#86198f">🔺 Aşırı 60+ gün</div><div class="sd-scard-num" style="color:#86198f">' + asiri + '</div><div class="sd-scard-sub">lokasyon</div></div>';
+            html += '</div>';
 
-            // Top ürünler HTML
-            var urunlerHtml = '';
-            topUrunler.forEach(function(entry, i) {
+            // Grafik + ürün
+            html += '<div class="sd-g2">';
+
+            // Stok dağılımı grafiği
+            html += '<div class="sd-card"><div class="sd-card-title">Stok Durum Dağılımı</div><div class="sd-card-sub">Lokasyon sayısına göre</div><div style="position:relative;height:220px"><canvas id="sdChartDurum"></canvas></div></div>';
+
+            // Ürün kartları
+            html += '<div class="sd-card"><div class="sd-card-title">Ürün Bazında Özet</div><div class="sd-card-sub">Toplam stok ve günlük satış</div>';
+            var urunColors = ['#c0392b','#1a3a5c','#2d6a4f','#b45309','#6d28d9'];
+            var ui2 = 0;
+            urunler.forEach(function(entry) {
                 var ad = entry[0], d = entry[1];
-                var pct = Math.round(d.tutar / maxUrunTutar * 100);
-                var bg = i % 2 === 1 ? 'background:#f9fafb' : '';
-                urunlerHtml += '<tr style="border-bottom:1px solid #f3f4f6;' + bg + '">';
-                urunlerHtml += '<td style="padding:.5rem;color:#9ca3af;font-size:.8rem;">' + (i+1) + '</td>';
-                urunlerHtml += '<td style="padding:.5rem;font-size:.82rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + ad + '">' + ad + '<div class="bar-wrap" style="margin-top:3px;"><div class="bar-fill" style="width:' + pct + '%"></div></div></td>';
-                urunlerHtml += '<td style="padding:.5rem;text-align:right;font-size:.82rem;">' + fmt(d.adet) + '</td>';
-                urunlerHtml += '<td style="padding:.5rem;text-align:right;font-size:.82rem;font-weight:600;">' + fmtTL(d.tutar) + '</td></tr>';
+                var sg = d.count ? Math.round(d.stokGun/d.count) : 0;
+                var pct = toplamStok > 0 ? Math.round(d.stok/toplamStok*100) : 0;
+                var renk = urunColors[ui2 % urunColors.length]; ui2++;
+                html += '<div style="margin-bottom:18px">';
+                html += '<div style="display:flex;justify-content:space-between;margin-bottom:4px">';
+                html += '<span style="font-size:12px;font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + ad + '">' + ad + '</span>';
+                html += '<span style="font-size:12px;font-weight:600">' + fmt(d.stok) + ' adet</span>';
+                html += '</div>';
+                html += '<div style="display:flex;justify-content:space-between;margin-bottom:5px">';
+                html += '<span style="font-size:10px;color:#8a8a8a">Satış: ' + fmt(d.satis) + '/gün &nbsp;·&nbsp; Ort. ' + (sg||'—') + ' gün</span>';
+                html += '<span style="font-size:10px;color:#8a8a8a">%' + pct + '</span>';
+                html += '</div>';
+                html += '<div class="sd-meter"><div class="sd-meter-fill" style="width:' + pct + '%;background:' + renk + '"></div></div>';
+                html += '</div>';
             });
-
-            // Top mağazalar HTML
-            var magazalarHtml = '';
-            topMagazalar.forEach(function(entry, i) {
-                var ad = entry[0], d = entry[1];
-                var renk = tipRenk[d.tip] || '#6b7280';
-                var bg = i % 2 === 1 ? 'background:#f9fafb' : '';
-                magazalarHtml += '<tr style="border-bottom:1px solid #f3f4f6;' + bg + '">';
-                magazalarHtml += '<td style="padding:.5rem;color:#9ca3af;font-size:.8rem;">' + (i+1) + '</td>';
-                magazalarHtml += '<td style="padding:.5rem;font-size:.82rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + ad + '">' + ad + '</td>';
-                magazalarHtml += '<td style="padding:.5rem;text-align:center;"><span class="badge" style="background:' + renk + '20;color:' + renk + '">' + (d.tip||'-') + '</span></td>';
-                magazalarHtml += '<td style="padding:.5rem;text-align:right;font-size:.82rem;font-weight:600;">' + fmtTL(d.tutar) + '</td></tr>';
-            });
-
-            var html = '<style>.satis-kpi{border-left-color:#ef4444}.trend-bar{display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem}.trend-label{min-width:90px;font-size:.75rem;color:#374151}.trend-bar-wrap{flex:1;background:#f3f4f6;border-radius:9999px;height:10px}.trend-bar-fill{height:10px;border-radius:9999px;background:linear-gradient(to right,#f97316,#ef4444)}.trend-val{min-width:80px;text-align:right;font-size:.75rem;font-weight:600;color:#1f2937}</style>';
-
-            html += '<div class="kpi-grid">';
-            html += '<div class="kpi satis-kpi"><div class="kpi-label">Toplam Satış</div><div class="kpi-value">' + fmtTL(toplamTutar) + '</div></div>';
-            html += '<div class="kpi satis-kpi"><div class="kpi-label">Satılan Adet</div><div class="kpi-value">' + fmt(toplamAdet) + '</div></div>';
-            html += '<div class="kpi satis-kpi"><div class="kpi-label">Mağaza Sayısı</div><div class="kpi-value">' + magazaSayisi + '</div></div>';
-            html += '<div class="kpi satis-kpi"><div class="kpi-label">Ürün Çeşidi</div><div class="kpi-value">' + urunCesidi + '</div></div>';
-            html += '<div class="kpi satis-kpi"><div class="kpi-label">Ort. Satış / Mağaza</div><div class="kpi-value">' + fmtTL(toplamTutar / (magazaSayisi||1)) + '</div></div>';
-            html += '<div class="kpi satis-kpi"><div class="kpi-label">Toplam Kayıt</div><div class="kpi-value">' + fmt(items.length) + '</div></div>';
+            html += '</div>';
             html += '</div>';
 
-            html += '<div class="dash-grid">';
-            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">🏪 Mağaza Tipi Dağılımı</h3>' + tiplerHtml + '</div>';
-            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">📅 Günlük Trend</h3>' + trendHtml + '</div>';
-            html += '</div>';
+            // İl tablosu + Chart
+            html += '<div class="sd-g2">';
 
-            html += '<div class="dash-grid">';
-            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">🏆 En Çok Satan Ürünler (Top 10)</h3><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;"><th style="padding:.5rem;text-align:left;font-size:.7rem;">#</th><th style="padding:.5rem;text-align:left;font-size:.7rem;">Ürün</th><th style="padding:.5rem;text-align:right;font-size:.7rem;">Adet</th><th style="padding:.5rem;text-align:right;font-size:.7rem;">Tutar</th></tr></thead><tbody>' + urunlerHtml + '</tbody></table></div>';
-            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">🏬 En Çok Satan Mağazalar (Top 10)</h3><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;"><th style="padding:.5rem;text-align:left;font-size:.7rem;">#</th><th style="padding:.5rem;text-align:left;font-size:.7rem;">Mağaza</th><th style="padding:.5rem;text-align:center;font-size:.7rem;">Tip</th><th style="padding:.5rem;text-align:right;font-size:.7rem;">Tutar</th></tr></thead><tbody>' + magazalarHtml + '</tbody></table></div>';
-            html += '</div>';
-
-            html += '<div class="card"><h3 style="margin-bottom:1rem;font-size:1rem;">📋 Detaylı İşlem Tablosu</h3><div class="table-container"><table style="width:100%;border-collapse:collapse;font-size:.82rem;"><thead><tr style="background:linear-gradient(to right,#f97316,#ef4444);color:white;"><th style="padding:.5rem;">Tarih</th><th style="padding:.5rem;">Ürün</th><th style="padding:.5rem;">Mağaza</th><th style="padding:.5rem;text-align:center;">Tip</th><th style="padding:.5rem;text-align:right;">Adet</th><th style="padding:.5rem;text-align:right;">Net Satış</th><th style="padding:.5rem;text-align:right;">Kümülatif Oran</th></tr></thead><tbody>';
-            var detayLimit = items.slice(0, 200);
-            detayLimit.forEach(function(r, i) {
-                var tarih   = (g(r,'DateTransaction','DATETRANSACTION')||'').split('T')[0].split(' ')[0] || '-';
-                var urunAd  = g(r,'SupplierItemName','SUPPLIERITEMNAME') || '-';
-                var magAd   = g(r,'StoreName','STORENAME') || '-';
-                var tip     = storeTypeMap[g(r,'StoreType','STORETYPE')] || g(r,'StoreType','STORETYPE') || '-';
-                var adet    = g(r,'QuantitySold','QUANTITYSOLD') || 0;
-                var tutar   = g(r,'NetSalesValue','NETSALESVALUE') || 0;
-                var kumOran = g(r,'KumuleNetSatisOrani','KUMULENETSATISORANI') || 0;
-                var renk    = tipRenk[tip] || '#6b7280';
-                var bg      = i % 2 === 1 ? 'background:#f9fafb' : '';
-                html += '<tr style="border-bottom:1px solid #f3f4f6;' + bg + '">';
-                html += '<td style="padding:.5rem;color:#6b7280;">' + tarih + '</td>';
-                html += '<td style="padding:.5rem;font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + urunAd + '">' + urunAd + '</td>';
-                html += '<td style="padding:.5rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + magAd + '">' + magAd + '</td>';
-                html += '<td style="padding:.5rem;text-align:center;"><span class="badge" style="background:' + renk + '20;color:' + renk + '">' + tip + '</span></td>';
-                html += '<td style="padding:.5rem;text-align:right;">' + fmt(adet) + '</td>';
-                html += '<td style="padding:.5rem;text-align:right;font-weight:600;">' + fmtTL(tutar) + '</td>';
-                html += '<td style="padding:.5rem;text-align:right;color:#6b7280;">%' + fmtDec(kumOran) + '</td></tr>';
+            // İl tablosu
+            html += '<div class="sd-card"><div class="sd-card-title">İl Bazında Stok (Top 10)</div><div class="sd-card-sub">Stok miktarına göre sıralı</div>';
+            html += '<table class="sd-table"><thead><tr><th>İl</th><th class="sd-num">Stok</th><th class="sd-num">Günlük Satış</th><th class="sd-num">Stok Gün</th></tr></thead><tbody>';
+            var maxIlStok = iller.length ? iller[0][1].stok : 1;
+            iller.forEach(function(entry, i) {
+                var il = entry[0], d = entry[1];
+                var pct = Math.round(d.stok/maxIlStok*100);
+                var bg = i%2===1 ? '#faf8f4' : '';
+                html += '<tr style="' + (bg?'background:'+bg:'') + '">';
+                html += '<td><div style="font-size:12px">' + il + '</div><div class="sd-bar"><div class="sd-bar-fill" style="width:' + pct + '%;background:#0d0d0d"></div></div></td>';
+                html += '<td class="sd-num" style="font-weight:600">' + fmt(d.stok) + '</td>';
+                html += '<td class="sd-num" style="color:#c0392b">' + fmt(d.satis) + '</td>';
+                html += '<td class="sd-num">—</td>';
+                html += '</tr>';
             });
             html += '</tbody></table></div>';
-            if (items.length > 200) html += '<div style="padding:1rem;text-align:center;color:#6b7280;font-size:.85rem;">İlk 200 kayıt gösteriliyor. CSV\'ye aktararak tümünü görebilirsiniz.</div>';
+
+            // Stok grafiği (ürün dağılımı)
+            html += '<div class="sd-card"><div class="sd-card-title">Ürün Stok Payı</div><div class="sd-card-sub">Adet bazında dağılım</div><div style="position:relative;height:280px"><canvas id="sdChartUrun"></canvas></div></div>';
             html += '</div>';
 
+            // Detay tablo
+            html += '<div class="sd-section">Detaylı Tablo</div>';
+            html += '<div class="sd-card"><div style="overflow-x:auto">';
+            html += '<table class="sd-table"><thead><tr><th>Ürün</th><th>Teslim Noktası</th><th>İl</th><th class="sd-num">Stok</th><th class="sd-num">Tutar</th><th class="sd-num">Günlük Satış</th><th class="sd-num">Yükleme</th><th class="sd-num">Durum</th></tr></thead><tbody>';
+            items.slice(0,200).forEach(function(r, i) {
+                var sg = parseFloat(r.STOK_GUN)||0;
+                var sm = parseFloat(r.STOK_MIKTARI)||0;
+                var badgeClass, badgeTxt;
+                if (sm===0) { badgeClass='sdb-sifir'; badgeTxt='Sıfır'; }
+                else if (sg>0&&sg<7) { badgeClass='sdb-kritik'; badgeTxt=sg+'g Kritik'; }
+                else if (sg>=7&&sg<14) { badgeClass='sdb-uyari'; badgeTxt=sg+'g Uyarı'; }
+                else if (sg>=14&&sg<30) { badgeClass='sdb-normal'; badgeTxt=sg+'g Normal'; }
+                else if (sg>=30&&sg<60) { badgeClass='sdb-yuksek'; badgeTxt=sg+'g Yüksek'; }
+                else { badgeClass='sdb-asiri'; badgeTxt=sg+'g Aşırı'; }
+                var bg = i%2===1?'background:#faf8f4':'';
+                html += '<tr style="' + bg + '">';
+                html += '<td style="font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.URUN_SATICI_ADI||'') + '">' + (r.URUN_SATICI_ADI||'-') + '</td>';
+                html += '<td style="font-size:11px;color:#8a8a8a;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (r.TESLIM_NOKTASI_ACIKLAMA||'-') + '</td>';
+                html += '<td>' + (r.IL_ADI||'-') + '</td>';
+                html += '<td class="sd-num" style="font-weight:600">' + fmt(r.STOK_MIKTARI||0) + '</td>';
+                html += '<td class="sd-num">' + fmtTL(r.STOK_TUTARI||0) + '</td>';
+                html += '<td class="sd-num" style="color:#c0392b">' + fmt(r.GUNLUK_SATIS_MIKTARI||0) + '</td>';
+                html += '<td class="sd-num" style="color:#2d6a4f">' + fmt(r.GUNLUK_YUKLEME_MIKTARI||0) + '</td>';
+                html += '<td><span class="sd-badge ' + badgeClass + '">' + badgeTxt + '</span></td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            if (items.length>200) html += '<div style="padding:12px;text-align:center;font-size:11px;color:#8a8a8a">İlk 200 kayıt · CSV\'ye aktararak tümünü görebilirsiniz</div>';
+            html += '</div></div>';
+            html += '</div></div>'; // sd-content + sd-wrap
+
             container.innerHTML = html;
+
+            // Charts
+            requestAnimationFrame(function() {
+                var gc = 'rgba(0,0,0,0.06)';
+                Chart.defaults.font.family = "'Inter', sans-serif";
+                Chart.defaults.font.size = 11;
+
+                var durumEl = document.getElementById('sdChartDurum');
+                if (durumEl) {
+                    _stokChart = new Chart(durumEl, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Sıfır','Kritik <7g','Uyarı 7-14g','Normal 14-30g','Yüksek 30-60g','Aşırı 60+g'],
+                            datasets: [{
+                                data: [sifir,kritik,uyari,normal,yuksek,asiri],
+                                backgroundColor: ['#9b2335','#b45309','#1d4ed8','#15803d','#6d28d9','#86198f'],
+                                borderWidth: 0, spacing: 2, borderRadius: 3
+                            }]
+                        },
+                        options: {
+                            responsive:true, maintainAspectRatio:false, cutout:'60%',
+                            plugins: {
+                                legend: { display:true, position:'bottom', labels: { color:'#8a8a8a', boxWidth:10, boxHeight:10, padding:10, font:{size:10} } }
+                            }
+                        }
+                    });
+                }
+
+                var urunEl = document.getElementById('sdChartUrun');
+                if (urunEl && urunler.length) {
+                    var urunLabels = [], urunData = [], urunColors2 = [];
+                    urunler.forEach(function(e, i) { urunLabels.push(e[0].split(' ').slice(0,3).join(' ')); urunData.push(Math.round(e[1].stok)); urunColors2.push(urunColors[i%urunColors.length]); });
+                    new Chart(urunEl, {
+                        type: 'bar',
+                        data: { labels: urunLabels, datasets: [{ data: urunData, backgroundColor: urunColors2, borderRadius: 4, borderSkipped: false }] },
+                        options: {
+                            responsive:true, maintainAspectRatio:false, indexAxis:'y',
+                            plugins: { legend: { display:false } },
+                            scales: {
+                                x: { grid:{color:gc}, ticks:{color:'#8a8a8a'} },
+                                y: { grid:{display:false}, ticks:{color:'#8a8a8a'} }
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
+        function displaySatisDashboard(items) {
+            destroyCharts();
+            var container = document.getElementById('reportContainer');
+            if (!items.length) { container.innerHTML = '<div class="card"><p class="alert alert-warning">Veri bulunamadı</p></div>'; return; }
+
+            if (items[0] && items[0].SalesList) {
+                var flat = [];
+                items.forEach(function(i) { if (i.SalesList) flat = flat.concat(i.SalesList); });
+                items = flat;
+            }
+
+            var fmt   = function(n) { return Math.round(parseFloat(n)||0).toLocaleString('tr-TR'); };
+            var fmtTL = function(n) { return Math.round(parseFloat(n)||0).toLocaleString('tr-TR') + ' ₺'; };
+            var fmtD  = function(n) { return (parseFloat(n)||0).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+            var g     = function(r) {
+                var keys = Array.prototype.slice.call(arguments, 1);
+                for (var i=0;i<keys.length;i++) { if (r[keys[i]]!==undefined&&r[keys[i]]!==null) return r[keys[i]]; }
+                return null;
+            };
+
+            var storeTypeMap = {'1':'MMM','2':'MM','3':'M'};
+            var tipRenk = {'MMM':'#7c3aed','MM':'#1a3a5c','M':'#2d6a4f'};
+            var prodColors = ['#e94560','#0f3460','#f5a623','#2d6a4f','#6d28d9'];
+
+            // Hesaplamalar
+            var toplamTutar=0, toplamAdet=0;
+            var magazaSet = {}, urunSet = {};
+            var tipler={}, gunMap={}, urunMap={}, magMap={};
+
+            items.forEach(function(r) {
+                var tutar = parseFloat(g(r,'NetSalesValue','NETSALESVALUE'))||0;
+                var adet  = parseFloat(g(r,'QuantitySold','QUANTITYSOLD'))||0;
+                var mag   = g(r,'StoreNumber','STORENUMBER')||'';
+                var urun  = g(r,'SupplierItemNumber','SUPPLIERITEMNUMBER')||'';
+                var tip   = storeTypeMap[g(r,'StoreType','STORETYPE')] || g(r,'StoreType','STORETYPE') || '?';
+                var gun   = (g(r,'DateTransaction','DATETRANSACTION')||'').split('T')[0].split(' ')[0];
+                var urunAd= g(r,'SupplierItemName','SUPPLIERITEMNAME')||urun||'-';
+                var magAd = g(r,'StoreName','STORENAME')||mag||'-';
+
+                toplamTutar += tutar; toplamAdet += adet;
+                magazaSet[mag]=1; urunSet[urun]=1;
+
+                if (!tipler[tip]) tipler[tip]={adet:0,tutar:0};
+                tipler[tip].adet+=adet; tipler[tip].tutar+=tutar;
+
+                if (gun) {
+                    if (!gunMap[gun]) gunMap[gun]={adet:0,tutar:0};
+                    gunMap[gun].adet+=adet; gunMap[gun].tutar+=tutar;
+                }
+
+                if (!urunMap[urunAd]) urunMap[urunAd]={adet:0,tutar:0,kodu:urun};
+                urunMap[urunAd].adet+=adet; urunMap[urunAd].tutar+=tutar;
+
+                if (!magMap[magAd]) magMap[magAd]={adet:0,tutar:0,tip:tip};
+                magMap[magAd].adet+=adet; magMap[magAd].tutar+=tutar;
+            });
+
+            var magazaSayisi = Object.keys(magazaSet).length;
+            var urunCesidi   = Object.keys(urunSet).length;
+            var gunler = Object.keys(gunMap).sort();
+            var topUrunler = Object.entries(urunMap).sort(function(a,b){return b[1].tutar-a[1].tutar;}).slice(0,10);
+            var topMagazalar = Object.entries(magMap).sort(function(a,b){return b[1].tutar-a[1].tutar;}).slice(0,10);
+            var maxUrunTutar = topUrunler.length ? topUrunler[0][1].tutar : 1;
+
+            // CSS
+            var html = '<style>';
+            html += '@import url("https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap");';
+            html += '.sv-wrap{font-family:"DM Sans",sans-serif;background:#f7f5f0;margin:-1rem;padding:0}';
+            html += '.sv-header{background:#1a1a2e;color:#fff;padding:44px 52px 36px;position:relative;overflow:hidden}';
+            html += '.sv-header::before{content:"";position:absolute;right:-60px;top:-60px;width:340px;height:340px;border-radius:50%;background:rgba(233,69,96,.12)}';
+            html += '.sv-header::after{content:"";position:absolute;right:60px;bottom:-50px;width:200px;height:200px;border-radius:50%;background:rgba(245,166,35,.08)}';
+            html += '.sv-eyebrow{font-size:11px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.5);margin-bottom:12px}';
+            html += '.sv-title{font-family:"DM Serif Display",serif;font-size:34px;font-weight:400;line-height:1.15;margin-bottom:8px}';
+            html += '.sv-title em{color:#e94560;font-style:italic}';
+            html += '.sv-meta{font-size:13px;color:rgba(255,255,255,.55);margin-top:8px}';
+            html += '.sv-meta span{color:rgba(255,255,255,.85)}';
+            html += '.sv-content{padding:36px 52px;max-width:1300px}';
+            html += '.sv-section{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#6b7280;margin-bottom:14px;display:flex;align-items:center;gap:10px}';
+            html += '.sv-section::after{content:"";flex:1;height:1px;background:#e5e2d9}';
+            html += '.sv-metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:36px}';
+            html += '.sv-metric{background:#fff;border:1px solid #e5e2d9;border-radius:12px;padding:18px 20px;position:relative}';
+            html += '.sv-dot{width:8px;height:8px;border-radius:50%;position:absolute;top:18px;right:18px}';
+            html += '.sv-mlabel{font-size:11px;color:#6b7280;font-weight:500;margin-bottom:5px}';
+            html += '.sv-mval{font-size:26px;font-weight:600;color:#1a1a2e;line-height:1}';
+            html += '.sv-msub{font-size:11px;color:#9ca3af;margin-top:5px}';
+            html += '.sv-g2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:32px}';
+            html += '.sv-g21{display:grid;grid-template-columns:2fr 1fr;gap:18px;margin-bottom:32px}';
+            html += '.sv-card{background:#fff;border:1px solid #e5e2d9;border-radius:16px;overflow:hidden}';
+            html += '.sv-card-head{padding:18px 22px 14px;border-bottom:1px solid #e5e2d9}';
+            html += '.sv-card-body{padding:18px 22px}';
+            html += '.sv-ctitle{font-size:13px;font-weight:600;margin-bottom:3px}';
+            html += '.sv-csub{font-size:11px;color:#6b7280}';
+            html += '.sv-pill{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:3px 10px;border-radius:20px;margin-bottom:8px}';
+            html += '.sv-pill-ac{background:rgba(233,69,96,.1);color:#e94560}';
+            html += '.sv-pill-mb{background:rgba(15,52,96,.1);color:#0f3460}';
+            html += '.sv-pill-other{background:rgba(245,166,35,.1);color:#b45309}';
+            html += '.sv-table{width:100%;border-collapse:collapse}';
+            html += '.sv-table th{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;padding:9px 18px;text-align:left;background:#faf9f6;border-bottom:1px solid #e5e2d9}';
+            html += '.sv-table td{padding:8px 18px;font-size:12px;border-bottom:1px solid #e5e2d9}';
+            html += '.sv-table tr:last-child td{border-bottom:none}';
+            html += '.sv-table tr:hover td{background:#faf9f6}';
+            html += '.sv-num{text-align:right;font-variant-numeric:tabular-nums}';
+            html += '.sv-rank{color:#9ca3af;font-size:11px}';
+            html += '.sv-bar{height:4px;background:#f0ede6;border-radius:2px;margin-top:4px}';
+            html += '.sv-bar-fill{height:100%;border-radius:2px}';
+            html += '.sv-tip-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600}';
+            html += '</style>';
+
+            html += '<div class="sv-wrap">';
+
+            // Header
+            html += '<div class="sv-header">';
+            html += '<div class="sv-eyebrow">BT Pet Ürünleri Ltd. Şti. · Satış Performans Analizi</div>';
+            html += '<div class="sv-title">Günlük Satış<br><em>Dashboard</em></div>';
+            html += '<div class="sv-meta">Toplam Mağaza: <span>' + magazaSayisi + '</span> &nbsp;·&nbsp; Ürün Çeşidi: <span>' + urunCesidi + '</span> &nbsp;·&nbsp; Kayıt: <span>' + fmt(items.length) + '</span></div>';
+            html += '</div>';
+
+            html += '<div class="sv-content">';
+
+            // Metrik kartlar
+            html += '<div class="sv-section">Genel Özet</div>';
+            html += '<div class="sv-metric-grid">';
+            html += '<div class="sv-metric"><div class="sv-dot" style="background:#16a34a"></div><div class="sv-mlabel">Toplam Net Ciro</div><div class="sv-mval">' + fmtTL(toplamTutar) + '</div><div class="sv-msub">KDV hariç</div></div>';
+            html += '<div class="sv-metric"><div class="sv-dot" style="background:#e94560"></div><div class="sv-mlabel">Satılan Adet</div><div class="sv-mval">' + fmt(toplamAdet) + '</div><div class="sv-msub">tüm kayıtlar</div></div>';
+            html += '<div class="sv-metric"><div class="sv-dot" style="background:#f5a623"></div><div class="sv-mlabel">Aktif Mağaza</div><div class="sv-mval">' + magazaSayisi + '</div><div class="sv-msub">satış olan nokta</div></div>';
+            html += '<div class="sv-metric"><div class="sv-dot" style="background:#0f3460"></div><div class="sv-mlabel">Ort. Ciro / Mağaza</div><div class="sv-mval">' + fmtTL(toplamTutar/(magazaSayisi||1)) + '</div><div class="sv-msub">KDV hariç</div></div>';
+            html += '</div>';
+
+            // Ürün kartları
+            html += '<div class="sv-section">Ürün Performansı</div>';
+            html += '<div class="sv-g2">';
+            var pillClasses = ['sv-pill-ac','sv-pill-mb','sv-pill-other'];
+            topUrunler.slice(0,2).forEach(function(entry, idx) {
+                var ad = entry[0], d = entry[1];
+                var pct = toplamTutar > 0 ? (d.tutar/toplamTutar*100) : 0;
+                var pctAdet = toplamAdet > 0 ? (d.adet/toplamAdet*100) : 0;
+                var renk = prodColors[idx];
+                var pillCls = pillClasses[idx] || 'sv-pill-other';
+                html += '<div class="sv-card">';
+                html += '<div class="sv-card-head">';
+                html += '<div class="sv-pill ' + pillCls + '">' + (d.kodu||'SKU') + '</div>';
+                html += '<div style="font-family:\'DM Serif Display\',serif;font-size:18px;line-height:1.2;margin-bottom:3px">' + ad + '</div>';
+                html += '</div>';
+                html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;padding:16px 22px;gap:10px">';
+                html += '<div><div style="font-size:10px;color:#6b7280;margin-bottom:3px">Satış Adedi</div><div style="font-size:20px;font-weight:600;color:' + renk + '">' + fmt(d.adet) + '</div></div>';
+                html += '<div><div style="font-size:10px;color:#6b7280;margin-bottom:3px">Net Ciro</div><div style="font-size:20px;font-weight:600">' + fmtTL(d.tutar) + '</div></div>';
+                html += '<div><div style="font-size:10px;color:#6b7280;margin-bottom:3px">Ciro Payı</div><div style="font-size:20px;font-weight:600">%' + fmtD(pct) + '</div></div>';
+                html += '</div>';
+                html += '<div style="padding:0 22px 16px">';
+                html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#6b7280;margin-bottom:5px"><span>Adet payı</span><span>%' + fmtD(pctAdet) + '</span></div>';
+                html += '<div style="height:8px;background:#f0ede6;border-radius:4px;overflow:hidden"><div style="height:100%;border-radius:4px;width:' + Math.round(pctAdet) + '%;background:' + renk + '"></div></div>';
+                html += '</div></div>';
+            });
+            html += '</div>';
+
+            // Günlük trend chart + Mağaza tipi
+            html += '<div class="sv-section">Satış Trendi &amp; Dağılım</div>';
+            html += '<div class="sv-g21">';
+            html += '<div class="sv-card"><div class="sv-card-head"><div class="sv-ctitle">Günlük Satış Trendi</div><div class="sv-csub">Net ciro bazında günlük hareket</div></div><div class="sv-card-body" style="position:relative;height:220px"><canvas id="svDailyChart"></canvas></div></div>';
+            html += '<div class="sv-card"><div class="sv-card-head"><div class="sv-ctitle">Mağaza Tipi</div><div class="sv-csub">Ciro payı dağılımı</div></div><div class="sv-card-body" style="position:relative;height:220px"><canvas id="svDonutChart"></canvas></div></div>';
+            html += '</div>';
+
+            // Top ürünler + Top mağazalar
+            html += '<div class="sv-section">En Çok Satanlar</div>';
+            html += '<div class="sv-g2">';
+
+            // Top ürünler tablo
+            html += '<div class="sv-card"><div class="sv-card-head" style="display:flex;justify-content:space-between;align-items:center"><div class="sv-ctitle">Ürün Bazında Satış (Top 10)</div><span style="font-size:11px;color:#6b7280">' + urunCesidi + ' ürün</span></div>';
+            html += '<table class="sv-table"><thead><tr><th style="width:24px">#</th><th>Ürün</th><th class="sv-num">Adet</th><th class="sv-num">Ciro</th></tr></thead><tbody>';
+            topUrunler.forEach(function(entry, i) {
+                var ad = entry[0], d = entry[1];
+                var pct = Math.round(d.tutar/maxUrunTutar*100);
+                var renk = prodColors[i%prodColors.length];
+                html += '<tr><td class="sv-rank">' + (i+1) + '</td>';
+                html += '<td><div style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + ad + '">' + ad + '</div><div class="sv-bar"><div class="sv-bar-fill" style="width:' + pct + '%;background:' + renk + '"></div></div></td>';
+                html += '<td class="sv-num">' + fmt(d.adet) + '</td><td class="sv-num" style="font-weight:600">' + fmtTL(d.tutar) + '</td></tr>';
+            });
+            html += '</tbody></table></div>';
+
+            // Top mağazalar tablo
+            html += '<div class="sv-card"><div class="sv-card-head" style="display:flex;justify-content:space-between;align-items:center"><div class="sv-ctitle">Mağaza Bazında Satış (Top 10)</div><span style="font-size:11px;color:#6b7280">' + magazaSayisi + ' mağaza</span></div>';
+            html += '<table class="sv-table"><thead><tr><th style="width:24px">#</th><th>Mağaza</th><th class="sv-num" style="text-align:center">Tip</th><th class="sv-num">Ciro</th></tr></thead><tbody>';
+            topMagazalar.forEach(function(entry, i) {
+                var ad = entry[0], d = entry[1];
+                var tipRenkVal = tipRenk[d.tip] || '#6b7280';
+                html += '<tr><td class="sv-rank">' + (i+1) + '</td>';
+                html += '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="' + ad + '">' + ad + '</td>';
+                html += '<td class="sv-num"><span class="sv-tip-badge" style="background:' + tipRenkVal + '15;color:' + tipRenkVal + '">' + (d.tip||'—') + '</span></td>';
+                html += '<td class="sv-num" style="font-weight:600">' + fmtTL(d.tutar) + '</td></tr>';
+            });
+            html += '</tbody></table></div>';
+            html += '</div>';
+
+            // Detay tablo
+            html += '<div class="sv-section">Detaylı İşlem Tablosu</div>';
+            html += '<div class="sv-card"><div style="overflow-x:auto">';
+            html += '<table class="sv-table"><thead><tr><th>Tarih</th><th>Ürün</th><th>Mağaza</th><th>Tip</th><th class="sv-num">Adet</th><th class="sv-num">Net Satış</th><th class="sv-num">Küm. Oran</th></tr></thead><tbody>';
+            items.slice(0,200).forEach(function(r, i) {
+                var tarih  = (g(r,'DateTransaction','DATETRANSACTION')||'').split('T')[0].split(' ')[0]||'-';
+                var urunAd = g(r,'SupplierItemName','SUPPLIERITEMNAME')||'-';
+                var magAd  = g(r,'StoreName','STORENAME')||'-';
+                var tip    = storeTypeMap[g(r,'StoreType','STORETYPE')]||g(r,'StoreType','STORETYPE')||'-';
+                var adet   = g(r,'QuantitySold','QUANTITYSOLD')||0;
+                var tutar  = g(r,'NetSalesValue','NETSALESVALUE')||0;
+                var kumOran= g(r,'KumuleNetSatisOrani','KUMULENETSATISORANI')||0;
+                var tipR   = tipRenk[tip]||'#6b7280';
+                var bg     = i%2===1?'background:#faf9f6':'';
+                html += '<tr style="' + bg + '">';
+                html += '<td style="color:#9ca3af;font-size:11px">' + tarih + '</td>';
+                html += '<td style="font-weight:500;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="' + urunAd + '">' + urunAd + '</td>';
+                html += '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="' + magAd + '">' + magAd + '</td>';
+                html += '<td><span class="sv-tip-badge" style="background:' + tipR + '15;color:' + tipR + '">' + tip + '</span></td>';
+                html += '<td class="sv-num">' + fmt(adet) + '</td>';
+                html += '<td class="sv-num" style="font-weight:600">' + fmtTL(tutar) + '</td>';
+                html += '<td class="sv-num" style="color:#9ca3af">%' + fmtD(kumOran) + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            if (items.length>200) html += '<div style="padding:12px;text-align:center;font-size:11px;color:#9ca3af">İlk 200 kayıt · CSV\'ye aktararak tümünü görün</div>';
+            html += '</div></div>';
+            html += '</div></div>'; // sv-content + sv-wrap
+
+            container.innerHTML = html;
+
+            // Charts
+            requestAnimationFrame(function() {
+                Chart.defaults.font.family = "'DM Sans', sans-serif";
+                Chart.defaults.font.size = 11;
+                var gc = 'rgba(0,0,0,0.05)';
+                var tc = '#9ca3af';
+
+                var dailyEl = document.getElementById('svDailyChart');
+                if (dailyEl && gunler.length) {
+                    var dailyLabels = gunler.map(function(g) { return g.slice(5); });
+                    var dailyData   = gunler.map(function(g) { return Math.round(gunMap[g].tutar); });
+                    _satisChart1 = new Chart(dailyEl, {
+                        type: 'line',
+                        data: {
+                            labels: dailyLabels,
+                            datasets: [{
+                                data: dailyData,
+                                borderColor: '#e94560',
+                                backgroundColor: 'rgba(233,69,96,.08)',
+                                borderWidth: 2.5,
+                                tension: .35,
+                                fill: true,
+                                pointRadius: 3,
+                                pointBackgroundColor: '#e94560',
+                                pointHoverRadius: 6
+                            }]
+                        },
+                        options: {
+                            responsive:true, maintainAspectRatio:false,
+                            plugins: { legend:{display:false}, tooltip:{ callbacks:{ label: function(ctx){ return ' ₺'+Math.round(ctx.parsed.y).toLocaleString('tr-TR'); } } } },
+                            scales: {
+                                x: { grid:{color:gc}, ticks:{color:tc, maxTicksLimit:10, maxRotation:0} },
+                                y: { grid:{color:gc}, ticks:{color:tc, callback: function(v){ return '₺'+(v/1000).toFixed(0)+'K'; }}, beginAtZero:true }
+                            }
+                        }
+                    });
+                }
+
+                var donutEl = document.getElementById('svDonutChart');
+                if (donutEl) {
+                    var donutLabels=[], donutData=[], donutColors=[];
+                    Object.entries(tipler).forEach(function(e,i) {
+                        donutLabels.push(e[0]+' · %'+Math.round(e[1].tutar/toplamTutar*100));
+                        donutData.push(Math.round(e[1].tutar));
+                        donutColors.push(tipRenk[e[0]]||prodColors[i]);
+                    });
+                    _satisChart2 = new Chart(donutEl, {
+                        type: 'doughnut',
+                        data: { labels:donutLabels, datasets:[{ data:donutData, backgroundColor:donutColors, borderWidth:0, spacing:2, borderRadius:3 }] },
+                        options: {
+                            responsive:true, maintainAspectRatio:false, cutout:'62%',
+                            plugins: {
+                                legend: { display:true, position:'bottom', labels:{ color:tc, boxWidth:10, boxHeight:10, padding:10, font:{size:10} } },
+                                tooltip: { callbacks:{ label: function(ctx){ return ' ₺'+Math.round(ctx.parsed).toLocaleString('tr-TR'); } } }
+                            }
+                        }
+                    });
+                }
+            });
         }
 
         document.getElementById('exportBtn').addEventListener('click', () => {
