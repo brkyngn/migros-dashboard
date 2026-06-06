@@ -403,6 +403,19 @@ app.post('/api/agent-calistir', async (req, res) => {
 
 // ========== API ==========
 
+// Bozuk tarihli satış kayıtlarını temizle
+app.delete('/api/temizle-bozuk-tarih', async (req, res) => {
+  try {
+    const r = await pool.query(`
+      DELETE FROM gunluk_satis
+      WHERE "DateTransaction" IS NULL
+         OR "DateTransaction" = ''
+         OR "DateTransaction" NOT SIMILAR TO '[0-9]{4}-[0-9]{2}-[0-9]{2}%'
+    `);
+    res.json({ success: true, deleted: r.rowCount });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString(), env: CONFIG.NODE_ENV }));
 
 app.post('/api/login', async (req, res) => {
