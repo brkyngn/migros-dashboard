@@ -93,13 +93,7 @@ function initializeDatabase() {
         db.run(`
           CREATE TABLE IF NOT EXISTS stok (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            SaticiId TEXT,
-            MalNo TEXT,
-            MalAdi TEXT,
-            StokMiktari TEXT,
-            Birim TEXT,
-            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(SaticiId, MalNo)
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
           )
         `);
 
@@ -214,18 +208,35 @@ async function fetchFromMigros(endpoint) {
   });
 }
 
+// Tabloya eksik kolonları ekle
+function ensureColumns(tableName, keys) {
+  return new Promise(resolve => {
+    db.all(`PRAGMA table_info(${tableName})`, (err, cols) => {
+      if (err) { resolve(); return; }
+      const existing = new Set(cols.map(c => c.name));
+      const missing = keys.filter(k => !existing.has(k));
+      if (!missing.length) { resolve(); return; }
+      let done = 0;
+      missing.forEach(col => {
+        db.run(`ALTER TABLE ${tableName} ADD COLUMN "${col}" TEXT`, () => {
+          if (++done === missing.length) resolve();
+        });
+      });
+    });
+  });
+}
+
 // Database'e veri kaydet
 function saveToDatabase(tableName, data) {
-  return new Promise((resolve) => {
-    if (!data || data.length === 0) {
-      resolve(0);
-      return;
-    }
+  return new Promise(async (resolve) => {
+    if (!data || data.length === 0) { resolve(0); return; }
+
+    const keys = Object.keys(data[0]);
+    await ensureColumns(tableName, keys);
 
     let insertedCount = 0;
-    const keys = Object.keys(data[0]);
     const placeholders = keys.map(() => '?').join(',');
-    const columns = keys.join(',');
+    const columns = keys.map(k => '"' + k + '"').join(',');
 
     const stmt = db.prepare(
       `INSERT OR IGNORE INTO ${tableName} (${columns}) VALUES (${placeholders})`
@@ -234,15 +245,11 @@ function saveToDatabase(tableName, data) {
     data.forEach(row => {
       const values = keys.map(key => row[key]);
       stmt.run(values, function(err) {
-        if (!err && this.changes > 0) {
-          insertedCount++;
-        }
+        if (!err && this.changes > 0) insertedCount++;
       });
     });
 
-    stmt.finalize(() => {
-      resolve(insertedCount);
-    });
+    stmt.finalize(() => resolve(insertedCount));
   });
 }
 
