@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KittyCady — Migros B2B Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--ink:#1a1a2e;--accent:#e94560;--gold:#f5a623;--navy:#0f3460;--bg:#f7f5f0;--card:#fff;--border:#e5e2d9;--muted:#6b7280}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6}
+.header{background:var(--ink);color:#fff;padding:36px 56px 32px;position:relative;overflow:hidden}
+.header::before{content:'';position:absolute;right:-60px;top:-60px;width:320px;height:320px;border-radius:50%;background:rgba(233,69,96,.1)}
+.header::after{content:'';position:absolute;right:80px;bottom:-50px;width:200px;height:200px;border-radius:50%;background:rgba(245,166,35,.07)}
+.header-inner{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:1rem;position:relative}
+.header-left .eyebrow{font-size:11px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.45);margin-bottom:10px}
+.header-left h1{font-family:'DM Serif Display',serif;font-size:32px;font-weight:400;line-height:1.15}
+.header-left h1 em{color:var(--accent);font-style:italic}
+.header-left .meta{font-size:12px;color:rgba(255,255,255,.45);margin-top:8px}
+.header-left .meta b{color:rgba(255,255,255,.75)}
+.nav{display:flex;gap:10px;flex-wrap:wrap}
+.nav a{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:8px;font-size:13px;font-weight:500;text-decoration:none;transition:all .15s}
+.nav-primary{background:var(--accent);color:#fff}
+.nav-primary:hover{background:#d63651}
+.nav-secondary{background:var(--navy);color:#fff}
+.nav-secondary:hover{background:#0a2a4a}
+.nav-outline{background:rgba(255,255,255,.08);color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.15)}
+.nav-outline:hover{background:rgba(255,255,255,.15)}
+.content{padding:40px 56px;max-width:1300px}
+.section{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.section::after{content:'';flex:1;height:1px;background:var(--border)}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:36px}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;position:relative}
+.kpi-dot{width:8px;height:8px;border-radius:50%;position:absolute;top:18px;right:18px}
+.kpi-label{font-size:11px;color:var(--muted);font-weight:500;margin-bottom:5px}
+.kpi-value{font-size:26px;font-weight:600;color:var(--ink);line-height:1}
+.kpi-sub{font-size:11px;color:#9ca3af;margin-top:5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:36px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.card-head{padding:18px 22px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.card-title{font-size:13px;font-weight:600}
+.card-sub{font-size:11px;color:var(--muted)}
+.card-body{padding:20px 22px}
+.card-link{font-size:12px;color:var(--accent);text-decoration:none;font-weight:500}
+.card-link:hover{text-decoration:underline}
+.log-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px}
+.log-row:last-child{border-bottom:none}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600}
+.badge-ok{background:#d1fae5;color:#065f46}
+.badge-fail{background:#fee2e2;color:#991b1b}
+.footer{background:var(--ink);color:rgba(255,255,255,.35);padding:22px 56px;font-size:11px;display:flex;justify-content:space-between;margin-top:20px}
+.footer b{color:rgba(255,255,255,.65)}
+.loading{text-align:center;padding:2rem;color:var(--muted)}
+@media(max-width:768px){.kpi-grid{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}.content{padding:24px}.header{padding:24px}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <div class="header-left">
+      <div class="eyebrow">BT Pet Ürünleri Ltd. Şti. · KittyCady Marka</div>
+      <h1>Migros B2B<br><em>Kontrol Paneli</em></h1>
+      <div class="meta" id="headerMeta">Yükleniyor...</div>
+    </div>
+    <nav class="nav">
+      <a href="/satis" class="nav-primary">📈 Satış Raporu</a>
+      <a href="/stok" class="nav-secondary">📦 Stok Raporu</a>
+      <a href="/tools" class="nav-outline">🔧 Veri Araçları</a>
+    </nav>
+  </div>
+</div>
+
+<div class="content">
+
+  <div class="section">Genel Özet</div>
+  <div class="kpi-grid" id="kpiGrid">
+    <div class="kpi"><div class="kpi-dot" style="background:#9ca3af"></div><div class="kpi-label">Toplam Satış Kaydı</div><div class="kpi-value loading">—</div></div>
+    <div class="kpi"><div class="kpi-dot" style="background:#9ca3af"></div><div class="kpi-label">Net Ciro (DB)</div><div class="kpi-value loading">—</div></div>
+    <div class="kpi"><div class="kpi-dot" style="background:#9ca3af"></div><div class="kpi-label">Stok Lokasyon</div><div class="kpi-value loading">—</div></div>
+    <div class="kpi"><div class="kpi-dot" style="background:#9ca3af"></div><div class="kpi-label">Başarılı Çekme</div><div class="kpi-value loading">—</div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Satış Trendi</div><div class="card-sub">Günlük net ciro (son kayıtlar)</div></div>
+        <a href="/satis" class="card-link">Detay →</a>
+      </div>
+      <div class="card-body" style="position:relative;height:200px">
+        <canvas id="trendChart"></canvas>
+        <div id="trendEmpty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:13px">Henüz satış verisi yok</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Stok Durum Özeti</div><div class="card-sub">Lokasyon bazında stok sağlığı</div></div>
+        <a href="/stok" class="card-link">Detay →</a>
+      </div>
+      <div class="card-body" style="position:relative;height:200px">
+        <canvas id="stokChart"></canvas>
+        <div id="stokEmpty" style="display:none;text-align:center;padding:40px;color:var(--muted);font-size:13px">Henüz stok verisi yok</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">Son Çekme Logları</div>
+  <div class="card">
+    <div class="card-body" id="logContainer"><div class="loading">Yükleniyor...</div></div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <div>BT Pet Ürünleri Ltd. Şti. &nbsp;·&nbsp; <b>KittyCady — Migros B2B Dashboard</b></div>
+  <div id="footerTime"></div>
+</div>
+
+<script>
+Chart.defaults.font.family = "'DM Sans', sans-serif";
+Chart.defaults.font.size = 11;
+var gc = 'rgba(0,0,0,0.05)', tc = '#9ca3af';
+
+var fmt   = function(n) { return Math.round(parseFloat(n)||0).toLocaleString('tr-TR'); };
+var fmtTL = function(n) { return Math.round(parseFloat(n)||0).toLocaleString('tr-TR') + ' ₺'; };
+
+document.getElementById('footerTime').textContent = 'Son güncelleme: ' + new Date().toLocaleString('tr-TR');
+
+// Özet KPI'lar
+fetch('/api/db-ozet').then(function(r){return r.json();}).then(function(d) {
+  var grid = document.getElementById('kpiGrid');
+  var satisCnt  = (d.satis && d.satis.cnt)   || 0;
+  var satisTutar= (d.satis && d.satis.tutar)  || 0;
+  var stokCnt   = (d.stok  && d.stok.cnt)    || 0;
+  var cekme     = d.basariliCekme || 0;
+  var sonSatis  = (d.satis && d.satis.son) ? d.satis.son.slice(0,10) : '—';
+  var sonStok   = (d.stok  && d.stok.son)  ? d.stok.son.slice(0,10)  : '—';
+
+  grid.innerHTML =
+    '<div class="kpi"><div class="kpi-dot" style="background:#e94560"></div><div class="kpi-label">Toplam Satış Kaydı</div><div class="kpi-value">' + fmt(satisCnt) + '</div><div class="kpi-sub">son: ' + sonSatis + '</div></div>' +
+    '<div class="kpi"><div class="kpi-dot" style="background:#16a34a"></div><div class="kpi-label">Net Ciro (DB)</div><div class="kpi-value">' + fmtTL(satisTutar) + '</div><div class="kpi-sub">KDV hariç</div></div>' +
+    '<div class="kpi"><div class="kpi-dot" style="background:#0f3460"></div><div class="kpi-label">Stok Lokasyon</div><div class="kpi-value">' + fmt(stokCnt) + '</div><div class="kpi-sub">son: ' + sonStok + '</div></div>' +
+    '<div class="kpi"><div class="kpi-dot" style="background:#f5a623"></div><div class="kpi-label">Başarılı Çekme</div><div class="kpi-value">' + cekme + '</div><div class="kpi-sub">toplam çekme sayısı</div></div>';
+
+  document.getElementById('headerMeta').innerHTML =
+    'Satıcı ID: <b>39286</b> &nbsp;·&nbsp; Kanal: <b>Migros / 5M</b> &nbsp;·&nbsp; Son Güncelleme: <b>' + new Date().toLocaleDateString('tr-TR') + '</b>';
+}).catch(function(){});
+
+// Satış trend grafiği
+fetch('/api/db-gunluk').then(function(r){return r.json();}).then(function(rows) {
+  var gunMap = {};
+  rows.forEach(function(r) {
+    var gun = (r.DateTransaction||'').split('T')[0].split(' ')[0];
+    if (!gun) return;
+    if (!gunMap[gun]) gunMap[gun] = 0;
+    gunMap[gun] += parseFloat(r.NetSalesValue)||0;
+  });
+  var gunler = Object.keys(gunMap).sort();
+  if (!gunler.length) { document.getElementById('trendEmpty').style.display='block'; document.getElementById('trendChart').style.display='none'; return; }
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: gunler.map(function(g){return g.slice(5);}),
+      datasets: [{
+        data: gunler.map(function(g){return Math.round(gunMap[g]);}),
+        borderColor: '#e94560', backgroundColor: 'rgba(233,69,96,.08)',
+        borderWidth: 2.5, tension: .35, fill: true, pointRadius: 3, pointBackgroundColor: '#e94560'
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}, tooltip:{callbacks:{label:function(c){return ' ₺'+Math.round(c.parsed.y).toLocaleString('tr-TR');}}}},
+      scales:{
+        x:{grid:{color:gc},ticks:{color:tc,maxTicksLimit:8,maxRotation:0}},
+        y:{grid:{color:gc},ticks:{color:tc,callback:function(v){return '₺'+(v/1000).toFixed(0)+'K';}},beginAtZero:true}
+      }
+    }
+  });
+}).catch(function(){});
+
+// Stok durum grafiği
+fetch('/api/db-stok').then(function(r){return r.json();}).then(function(rows) {
+  if (!rows.length) { document.getElementById('stokEmpty').style.display='block'; document.getElementById('stokChart').style.display='none'; return; }
+  var sifir=0,kritik=0,uyari=0,normal=0,yuksek=0;
+  rows.forEach(function(r) {
+    var sg = parseFloat(r.STOK_GUN)||0;
+    var sm = parseFloat(r.STOK_MIKTARI)||0;
+    if (sm===0) sifir++;
+    else if (sg>0&&sg<7) kritik++;
+    else if (sg>=7&&sg<14) uyari++;
+    else if (sg>=14&&sg<30) normal++;
+    else yuksek++;
+  });
+  new Chart(document.getElementById('stokChart'), {
+    type: 'doughnut',
+    data: {
+      labels:['Sıfır Stok','Kritik <7g','Uyarı 7-14g','Normal 14-30g','Yüksek 30+g'],
+      datasets:[{data:[sifir,kritik,uyari,normal,yuksek],backgroundColor:['#9b2335','#b45309','#1d4ed8','#15803d','#6d28d9'],borderWidth:0,spacing:2,borderRadius:3}]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,cutout:'58%',
+      plugins:{legend:{display:true,position:'right',labels:{color:tc,boxWidth:10,boxHeight:10,padding:8,font:{size:10}}}}
+    }
+  });
+}).catch(function(){});
+
+// Loglar
+fetch('/api/cekme-loglari').then(function(r){return r.json();}).then(function(logs) {
+  var el = document.getElementById('logContainer');
+  if (!logs.length) { el.innerHTML='<div style="color:var(--muted);font-size:13px">Henüz log yok</div>'; return; }
+  var html = '';
+  logs.slice(0,8).forEach(function(l) {
+    var ok = l.durum === 'BAŞARILI';
+    html += '<div class="log-row">';
+    html += '<div style="display:flex;align-items:center;gap:10px"><span class="badge ' + (ok?'badge-ok':'badge-fail') + '">' + l.durum + '</span><span style="font-weight:500">' + l.raport_adi + '</span></div>';
+    html += '<div style="display:flex;gap:20px;align-items:center"><span style="color:var(--muted)">' + l.mesaj + '</span><span style="color:#9ca3af;font-size:11px">' + (l.cekme_tarihi||'').slice(0,16) + '</span></div>';
+    html += '</div>';
+  });
+  el.innerHTML = html;
+}).catch(function(){});
+</script>
+</body>
+</html>

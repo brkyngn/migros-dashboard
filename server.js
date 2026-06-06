@@ -13,10 +13,10 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'frontend')));
 
-// Ana sayfa
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
-});
+app.get('/',      (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'dashboard.html')));
+app.get('/satis', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'satis.html')));
+app.get('/stok',  (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'stok.html')));
+app.get('/tools', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'index.html')));
 
 // Konfigürasyon
 const CONFIG = {
@@ -318,6 +318,42 @@ app.get('/isleticirapor/*', (req, res) => {
     'Authorization': req.headers['authorization'] || '',
     'ConnectionCode': req.headers['connectioncode'] || ''
   }, null, res);
+});
+
+// ========== DB OKUMA ENDPOINTLERİ ==========
+
+app.get('/api/db-stok', (req, res) => {
+  db.all('SELECT * FROM stok ORDER BY createdAt DESC LIMIT 5000', (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.get('/api/db-gunluk', (req, res) => {
+  const { startDate, endDate } = req.query;
+  const conditions = ['1=1'];
+  const params = [];
+  if (startDate) { conditions.push("DATE(DateTransaction) >= DATE(?)"); params.push(startDate); }
+  if (endDate)   { conditions.push("DATE(DateTransaction) <= DATE(?)"); params.push(endDate); }
+  const query = 'SELECT * FROM gunluk_satis WHERE ' + conditions.join(' AND ') + ' ORDER BY DateTransaction DESC LIMIT 20000';
+  db.all(query, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.get('/api/db-ozet', (req, res) => {
+  const result = {};
+  db.get('SELECT COUNT(*) as cnt, MAX(createdAt) as son FROM stok', (err, r) => {
+    result.stok = r || {};
+    db.get('SELECT COUNT(*) as cnt, SUM(CAST(NetSalesValue as REAL)) as tutar, MAX(DateTransaction) as son FROM gunluk_satis', (err2, r2) => {
+      result.satis = r2 || {};
+      db.get('SELECT COUNT(*) as cnt FROM cekme_loglari WHERE durum="BAŞARILI"', (err3, r3) => {
+        result.basariliCekme = (r3 || {}).cnt || 0;
+        res.json(result);
+      });
+    });
+  });
 });
 
 // ========== API ENDPOINTS ==========
