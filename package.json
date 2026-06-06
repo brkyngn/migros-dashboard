@@ -4,6 +4,7 @@
   "description": "Migros B2B Reporting and Analytics System",
   "main": "backend/server.js",
   "scripts": {
+    "postinstall": "npm --prefix client install",
     "build": "npm --prefix client run build",
     "start": "concurrently \"node server.js\" \"node agent.js\"",
     "agent": "node agent.js",
