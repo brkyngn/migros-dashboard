@@ -94,6 +94,14 @@ tr:hover td{background:#faf8f4}
   </div>
 </div>
 
+<div style="background:#1a1a1a;padding:12px 56px;display:flex;align-items:center;gap:12px;flex-wrap:wrap" class="no-print">
+  <span style="font-size:11px;color:rgba(255,255,255,.45);font-weight:500;letter-spacing:.08em;text-transform:uppercase">Veri Tarihi</span>
+  <select id="tarihSelect" style="font-family:'Inter',sans-serif;font-size:12px;background:#2a2a2a;color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:6px 10px;outline:none;cursor:pointer">
+    <option value="">⏳ Yükleniyor...</option>
+  </select>
+  <span id="tarihInfo" style="font-size:11px;color:rgba(255,255,255,.35)"></span>
+</div>
+
 <div class="content" id="content">
   <div style="text-align:center;padding:60px;color:var(--muted)">⏳ Veriler yükleniyor...</div>
 </div>
@@ -112,7 +120,33 @@ var charts=[];
 function fmt(n){return Math.round(parseFloat(n)||0).toLocaleString('tr-TR');}
 function fmtTL(n){return Math.round(parseFloat(n)||0).toLocaleString('tr-TR')+' ₺';}
 
-fetch('/api/db-stok').then(function(r){return r.json();}).then(function(rows){
+// Mevcut tarihleri yükle
+fetch('/api/db-stok-gecmis').then(function(r){return r.json();}).then(function(tarihler){
+  var sel = document.getElementById('tarihSelect');
+  if (!tarihler.length) {
+    sel.innerHTML = '<option value="">Stok verisi yok</option>';
+    document.getElementById('tarihInfo').textContent = 'Veri çekmek için /tools sayfasını kullanın';
+    return;
+  }
+  sel.innerHTML = tarihler.map(function(t, i) {
+    return '<option value="' + t + '"' + (i===0?' selected':'') + '>' + t + (i===0?' (En Güncel)':'') + '</option>';
+  }).join('');
+  loadStok(tarihler[0]);
+  sel.addEventListener('change', function() { loadStok(sel.value); });
+}).catch(function(){ loadStok(null); });
+
+function loadStok(tarih) {
+  var url = tarih ? '/api/db-stok-tarih?tarih=' + tarih : '/api/db-stok';
+  fetch(url).then(function(r){return r.json();}).then(function(rows){
+    var info = document.getElementById('tarihInfo');
+    if (info && tarih) info.textContent = tarih + ' tarihli stok · ' + rows.length + ' lokasyon';
+    renderStok(rows);
+  }).catch(function(e){
+    document.getElementById('content').innerHTML = '<div class="no-data">Veri yüklenemedi: ' + e.message + '</div>';
+  });
+}
+
+function renderStok(rows) {
   charts.forEach(function(c){c.destroy();}); charts=[];
 
   var content=document.getElementById('content');
@@ -275,9 +309,7 @@ fetch('/api/db-stok').then(function(r){return r.json();}).then(function(rows){
       }));
     }
   });
-}).catch(function(err){
-  document.getElementById('content').innerHTML='<div class="no-data">Veri yüklenemedi: '+err.message+'</div>';
-});
+}
 </script>
 </body>
 </html>

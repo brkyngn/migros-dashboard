@@ -163,7 +163,10 @@ async function fetchStok() {
     'Stok'
   );
   if (!r || !r.data) return 0;
-  return saveToDatabase('stok', r.data);
+  // Verinin temsil ettiği tarih = dün
+  const veriTarihi = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  const stamped = r.data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
+  return saveToDatabase('stok', stamped);
 }
 
 // Günlük Satış çalıştır

@@ -194,7 +194,29 @@ app.get('/isleticirapor/*', (req, res) => {
 
 app.get('/api/db-stok', async (req, res) => {
   try {
-    const r = await pool.query('SELECT * FROM stok ORDER BY id DESC LIMIT 5000');
+    // En güncel veri_tarihi'nin kayıtlarını getir
+    const latest = await pool.query(`SELECT MAX(veri_tarihi) as son FROM stok`);
+    const sonTarih = latest.rows[0]?.son;
+    if (!sonTarih) return res.json([]);
+    const r = await pool.query('SELECT * FROM stok WHERE veri_tarihi = $1 ORDER BY id LIMIT 5000', [sonTarih]);
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Stok geçmişi — tüm tarihler
+app.get('/api/db-stok-gecmis', async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT DISTINCT veri_tarihi FROM stok WHERE veri_tarihi IS NOT NULL ORDER BY veri_tarihi DESC`);
+    res.json(r.rows.map(row => row.veri_tarihi));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Belirli tarihli stok
+app.get('/api/db-stok-tarih', async (req, res) => {
+  try {
+    const { tarih } = req.query;
+    if (!tarih) return res.status(400).json({ error: 'tarih parametresi gerekli' });
+    const r = await pool.query('SELECT * FROM stok WHERE veri_tarihi = $1 ORDER BY id LIMIT 5000', [tarih]);
     res.json(r.rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -230,8 +252,10 @@ app.post('/api/kaydet-stok', async (req, res) => {
   const data = req.body.data;
   if (!data || !data.length) return res.json({ success: false, message: 'Veri yok' });
   try {
-    const count = await saveToDatabase('stok', data);
-    res.json({ success: true, message: count + ' kayıt eklendi' });
+    const veriTarihi = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    const stamped = data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
+    const count = await saveToDatabase('stok', stamped);
+    res.json({ success: true, message: count + ' kayıt eklendi (' + veriTarihi + ')' });
   } catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
@@ -302,7 +326,11 @@ app.post('/api/agent-stok', async (req, res) => {
   (async () => {
     const r = await agentFetch(`/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`, 'Stok');
     let count = 0;
-    if (r && r.data) count = await saveToDatabase('stok', r.data);
+    if (r && r.data) {
+      const veriTarihi = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+      const stamped = r.data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
+      count = await saveToDatabase('stok', stamped);
+    }
     console.log(`✅ Stok: ${count} kayıt`);
     await logToDb('Manuel Stok', count > 0 ? 'BAŞARILI' : 'BAŞARISIZ', count, `Stok: ${count}`);
   })();
