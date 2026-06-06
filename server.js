@@ -10,13 +10,13 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Route'lar static'ten önce tanımlanmalı
-app.get('/',      (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'dashboard.html')));
-app.get('/satis', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'satis.html')));
-app.get('/stok',  (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'stok.html')));
-app.get('/tools', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'tools.html')));
+// React app (built)
+const clientDist = path.join(__dirname, 'client', 'dist');
+app.use(express.static(clientDist));
 
-app.use(express.static(path.join(__dirname, 'frontend')));
+// Eski HTML araçlar sayfası
+app.get('/tools', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'tools.html')));
+app.use('/frontend', express.static(path.join(__dirname, 'frontend')));
 
 const CONFIG = {
   MIGROS_API: process.env.MIGROS_API || 'https://api-prod.migros.com.tr/rest/b2b/api/v1',
@@ -467,6 +467,12 @@ async function startServer() {
     process.exit(1);
   }
 }
+
+// SPA fallback — tüm bilinmeyen route'ları React'a yönlendir
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api') || req.path.startsWith('/auth') || req.path.startsWith('/report') || req.path === '/tools') return;
+  res.sendFile(path.join(clientDist, 'index.html'));
+});
 
 startServer();
 module.exports = app;

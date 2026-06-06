@@ -22,3 +22,5 @@ Thumbs.db
 # Runtime
 pids/
 *.pid
+client/node_modules
+client/dist
