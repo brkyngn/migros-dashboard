@@ -389,22 +389,12 @@ app.post('/api/agent-calistir', async (req, res) => {
       req3.end();
     });
 
-    let gunlukCount=0, isleticiCount=0, stokCount=0;
+    let gunlukCount=0, stokCount=0;
 
     // Stok
     console.log('📥 Stok çekiliyor...');
     const stokRes = await fetchAgent(`/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`, 'Stok');
     if (stokRes && stokRes.data) stokCount = await saveToDatabase('stok', stokRes.data);
-
-    // İşletici Satış
-    console.log('📥 İşletici Satış çekiliyor...');
-    const today = new Date().toISOString().split('T')[0].split('-').reverse().join('.');
-    const isleticiRes = await fetchAgent(`/isleticirapor/rapor?pageno=1&raporBaslangic=${today}&raporBitis=${today}&saticiid=${CONFIG.SATICI_ID}`, 'İşletici Satış');
-    if (isleticiRes && isleticiRes.data) {
-      let flat = isleticiRes.data;
-      if (flat.length > 0 && flat[0].SalesList) flat = flat.flatMap(i => i.SalesList || []);
-      isleticiCount = await saveToDatabase('isletici_satis', flat);
-    }
 
     // Günlük Satış
     console.log('📥 Günlük Satış çekiliyor...');
@@ -416,8 +406,8 @@ app.post('/api/agent-calistir', async (req, res) => {
       gunlukCount = await saveToDatabase('gunluk_satis', flat);
     }
 
-    const total = gunlukCount + isleticiCount + stokCount;
-    const mesaj = `Günlük Satış: ${gunlukCount}, İşletici Satış: ${isleticiCount}, Stok: ${stokCount}`;
+    const total = gunlukCount + stokCount;
+    const mesaj = `Günlük Satış: ${gunlukCount}, Stok: ${stokCount}`;
     console.log(`✅ Manuel çekme tamamlandı: ${total} kayıt — ${mesaj}`);
     db.run('INSERT INTO cekme_loglari (raport_adi, durum, satir_sayisi, mesaj) VALUES (?,?,?,?)',
       ['Manuel Çekme', 'BAŞARILI', total, mesaj]);

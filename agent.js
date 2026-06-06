@@ -331,19 +331,15 @@ async function runDailyCollection() {
     const gunlukCount = await fetchGunlukSatis();
     console.log(`   → Günlük Satış: ${gunlukCount} kayıt`);
 
-    console.log('📥 İşletici Satış çekiliyor...');
-    const isleticiCount = await fetchIsleticiSatis();
-    console.log(`   → İşletici Satış: ${isleticiCount} kayıt`);
-
     console.log('📥 Stok çekiliyor...');
     const stokCount = await fetchStok();
     console.log(`   → Stok: ${stokCount} kayıt`);
 
-    const totalCount = gunlukCount + isleticiCount + stokCount;
+    const totalCount = gunlukCount + stokCount;
     console.log(`✅ Günlük çekme tamamlandı: ${totalCount} kayıt kaydedildi\n`);
 
     logToDatabase('Tüm Raporlar', 'BAŞARILI', totalCount,
-      `Günlük Satış: ${gunlukCount}, İşletici Satış: ${isleticiCount}, Stok: ${stokCount}`);
+      `Günlük Satış: ${gunlukCount}, Stok: ${stokCount}`);
   } catch (err) {
     console.error('❌ Çekme hatası:', err.message);
     logToDatabase('Tüm Raporlar', 'HATA', 0, err.message);
