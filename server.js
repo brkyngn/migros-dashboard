@@ -9,12 +9,14 @@ const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'frontend')));
 
+// Route'lar static'ten önce tanımlanmalı
 app.get('/',      (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'dashboard.html')));
 app.get('/satis', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'satis.html')));
 app.get('/stok',  (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'stok.html')));
-app.get('/tools', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'index.html')));
+app.get('/tools', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'tools.html')));
+
+app.use(express.static(path.join(__dirname, 'frontend')));
 
 const CONFIG = {
   MIGROS_API: process.env.MIGROS_API || 'https://api-prod.migros.com.tr/rest/b2b/api/v1',

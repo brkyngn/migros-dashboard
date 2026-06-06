@@ -128,7 +128,19 @@
 
     <script>
         const PROXY_URL = '';
-        let token = '', connectionCodeRaw = '', currentData = null, username = '', activeTab = 'isleticiSatis';
+        let token = sessionStorage.getItem('mgr_token') || '';
+        let connectionCodeRaw = sessionStorage.getItem('mgr_cc') || '';
+        let currentData = null;
+        let username = sessionStorage.getItem('mgr_user') || '';
+        let activeTab = 'isleticiSatis';
+
+        // Oturum varsa direkt dashboard'u göster
+        if (token && username) {
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('dashboardScreen').classList.add('active');
+            document.getElementById('welcomeText').textContent = 'Hoş geldiniz, ' + username;
+            renderFilters();
+        }
 
         async function sha1(str) {
             const buffer = new TextEncoder().encode(str);
@@ -164,6 +176,9 @@
                 if (data.token) {
                     token = data.token;
                     connectionCodeRaw = data.connectionCode || '';
+                    sessionStorage.setItem('mgr_token', token);
+                    sessionStorage.setItem('mgr_cc', connectionCodeRaw);
+                    sessionStorage.setItem('mgr_user', username);
                     document.getElementById('loginScreen').style.display = 'none';
                     document.getElementById('dashboardScreen').classList.add('active');
                     document.getElementById('welcomeText').textContent = `Hoş geldiniz, ${username}`;
@@ -220,10 +235,10 @@
         });
 
         document.getElementById('logoutBtn').addEventListener('click', () => {
-            token = '';
-            connectionCodeRaw = '';
-            currentData = null;
-            username = '';
+            token = ''; connectionCodeRaw = ''; currentData = null; username = '';
+            sessionStorage.removeItem('mgr_token');
+            sessionStorage.removeItem('mgr_cc');
+            sessionStorage.removeItem('mgr_user');
             document.getElementById('loginScreen').style.display = 'block';
             document.getElementById('dashboardScreen').classList.remove('active');
             document.getElementById('username').value = '';
