@@ -640,6 +640,10 @@
             html += '</div></div>';
 
             // Content
+            html += '<div style="padding:12px 48px;background:#1a1a1a;display:flex;align-items:center;gap:12px">';
+            html += '<button onclick="kaydetDB(\'stok\')" style="background:#2d6a4f;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">💾 Veritabanına Kaydet</button>';
+            html += '<span id="stokKaydetMsg" style="font-size:12px;color:rgba(255,255,255,.5)"></span>';
+            html += '</div>';
             html += '<div class="sd-content">';
 
             // Durum özeti
@@ -904,6 +908,10 @@
             html += '<div class="sv-meta">Toplam Mağaza: <span>' + magazaSayisi + '</span> &nbsp;·&nbsp; Ürün Çeşidi: <span>' + urunCesidi + '</span> &nbsp;·&nbsp; Kayıt: <span>' + fmt(items.length) + '</span></div>';
             html += '</div>';
 
+            html += '<div style="padding:12px 52px;background:#0f3460;display:flex;align-items:center;gap:12px">';
+            html += '<button onclick="kaydetDB(\'gunluk\')" style="background:#e94560;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">💾 Veritabanına Kaydet</button>';
+            html += '<span id="gunlukKaydetMsg" style="font-size:12px;color:rgba(255,255,255,.5)"></span>';
+            html += '</div>';
             html += '<div class="sv-content">';
 
             // Metrik kartlar
@@ -1083,6 +1091,29 @@
             link.download = `migros_${activeTab}_${new Date().toISOString().split('T')[0]}.csv`;
             link.click();
         });
+
+        async function kaydetDB(tip) {
+            if (!currentData || !currentData.data || !currentData.data.length) {
+                showAlert('error', 'Önce raporu getirin.');
+                return;
+            }
+            var endpoint = tip === 'stok' ? '/api/kaydet-stok' : '/api/kaydet-gunluk';
+            var msgEl = document.getElementById(tip === 'stok' ? 'stokKaydetMsg' : 'gunlukKaydetMsg');
+            if (msgEl) msgEl.textContent = '⏳ Kaydediliyor...';
+            try {
+                var res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ data: currentData.data })
+                });
+                var result = await res.json();
+                if (msgEl) msgEl.textContent = result.success ? '✅ ' + result.message : '❌ ' + result.message;
+                showAlert(result.success ? 'success' : 'error', result.message);
+            } catch(e) {
+                if (msgEl) msgEl.textContent = '❌ Hata: ' + e.message;
+                showAlert('error', e.message);
+            }
+        }
 
         function showAlert(type, message) {
             const alertClass = type === 'error' ? 'alert-error' : type === 'success' ? 'alert-success' : 'alert-warning';

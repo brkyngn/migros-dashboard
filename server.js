@@ -10,7 +10,7 @@ const app = express();
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'frontend')));
 
 // Ana sayfa
@@ -381,6 +381,30 @@ async function agentFetch(endpoint, name) {
     req3.end();
   });
 }
+
+// Veriyi DB'ye kaydet (frontend'den gelen data)
+app.post('/api/kaydet-stok', async (req, res) => {
+  const data = req.body.data;
+  if (!data || !data.length) return res.json({ success: false, message: 'Veri yok' });
+  try {
+    const count = await saveToDatabase('stok', data);
+    res.json({ success: true, message: count + ' yeni kayıt eklendi' });
+  } catch(e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+app.post('/api/kaydet-gunluk', async (req, res) => {
+  let data = req.body.data;
+  if (!data || !data.length) return res.json({ success: false, message: 'Veri yok' });
+  try {
+    if (data[0].SalesList) data = data.flatMap(i => i.SalesList || []);
+    const count = await saveToDatabase('gunluk_satis', data);
+    res.json({ success: true, message: count + ' yeni kayıt eklendi' });
+  } catch(e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
 
 // Stok çek
 app.post('/api/agent-stok', async (req, res) => {
