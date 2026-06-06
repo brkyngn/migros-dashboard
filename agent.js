@@ -1,406 +1,230 @@
 const https = require('https');
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-const fs = require('fs');
+const { Pool } = require('pg');
 require('dotenv').config();
 
-// Konfigürasyon
 const CONFIG = {
-  MIGROS_API: process.env.MIGROS_API || 'https://api-prod.migros.com.tr/rest/b2b/api/v1',
-  USERNAME: process.env.MIGROS_USERNAME,
-  PASSWORD: process.env.MIGROS_PASSWORD,
+  USERNAME:  process.env.MIGROS_USERNAME,
+  PASSWORD:  process.env.MIGROS_PASSWORD,
   SATICI_ID: process.env.SATICI_ID,
-  DB_PATH: process.env.DB_PATH || path.join(__dirname, '../data/migros-data.db'),
-  CHECK_HOURS: [6],
-  NODE_ENV: process.env.NODE_ENV || 'development'
+  NODE_ENV:  process.env.NODE_ENV || 'development'
 };
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
 let token = '';
 let connectionCodeRaw = '';
-let db = null;
 
-// Database başlat
-function initDatabase() {
-  return new Promise((resolve, reject) => {
-    const dataDir = path.dirname(CONFIG.DB_PATH);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-
-    db = new sqlite3.Database(CONFIG.DB_PATH, (err) => {
-      if (err) {
-        console.error('❌ Database bağlantı hatası:', err.message);
-        reject(err);
-        return;
-      }
-
-      console.log('✅ Database bağlantısı kuruldu:', CONFIG.DB_PATH);
-
-      db.serialize(() => {
-        db.run(`
-          CREATE TABLE IF NOT EXISTS gunluk_satis (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            DateTransaction TEXT,
-            SupplierCode TEXT,
-            SupplierName TEXT,
-            StoreType TEXT,
-            StoreNumber TEXT,
-            StoreName TEXT,
-            SupplierStoreNumber TEXT,
-            BarcodeNumber TEXT,
-            ItemNumber TEXT,
-            SupplierItemNumber TEXT,
-            SupplierItemName TEXT,
-            QuantitySold TEXT,
-            TotalWeight TEXT,
-            NetSalesValue TEXT,
-            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(DateTransaction, SupplierCode, ItemNumber, StoreNumber)
-          )
-        `);
-
-        db.run(`
-          CREATE TABLE IF NOT EXISTS isletici_satis (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            FisNo TEXT,
-            FisTarihi TEXT,
-            TeslimNoktasiKodu TEXT,
-            TeslimNoktasiAdi TEXT,
-            SaticiKodu TEXT,
-            SaticiAdi TEXT,
-            ToplamTutar TEXT,
-            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(FisNo, TeslimNoktasiKodu)
-          )
-        `);
-
-        db.run(`
-          CREATE TABLE IF NOT EXISTS stok (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-          )
-        `);
-
-        db.run(`
-          CREATE TABLE IF NOT EXISTS cekme_loglari (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            raport_adi TEXT,
-            durum TEXT,
-            satir_sayisi INTEGER,
-            mesaj TEXT,
-            cekme_tarihi DATETIME DEFAULT CURRENT_TIMESTAMP
-          )
-        `);
-      });
-
-      resolve();
-    });
-  });
+// Tabloları oluştur
+async function initDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gunluk_satis (
+      id SERIAL PRIMARY KEY,
+      "DateTransaction" TEXT, "SupplierCode" TEXT, "SupplierName" TEXT,
+      "StoreType" TEXT, "StoreNumber" TEXT, "StoreName" TEXT,
+      "SupplierStoreNumber" TEXT, "BarcodeNumber" TEXT, "ItemNumber" TEXT,
+      "SupplierItemNumber" TEXT, "SupplierItemName" TEXT,
+      "QuantitySold" TEXT, "TotalWeight" TEXT, "NetSalesValue" TEXT,
+      "createdat" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS stok (
+      id SERIAL PRIMARY KEY,
+      "createdat" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cekme_loglari (
+      id SERIAL PRIMARY KEY,
+      raport_adi TEXT, durum TEXT, satir_sayisi INTEGER, mesaj TEXT,
+      cekme_tarihi TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  console.log('✅ PostgreSQL tabloları hazır');
 }
 
-// SHA1 hash
-async function sha1(str) {
-  const crypto = require('crypto');
-  return crypto.createHash('sha1').update(str).digest('hex');
+// SHA1
+function sha1(str) {
+  return require('crypto').createHash('sha1').update(str).digest('hex');
 }
 
 // Login
 async function login() {
-  return new Promise((resolve) => {
-    const postData = JSON.stringify({
-      username: CONFIG.USERNAME,
-      password: CONFIG.PASSWORD
-    });
-
-    const options = {
-      hostname: 'api-prod.migros.com.tr',
-      port: 443,
-      path: '/rest/b2b/api/v1/auth/login',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData)
-      },
+  return new Promise(resolve => {
+    const postData = JSON.stringify({ username: CONFIG.USERNAME, password: CONFIG.PASSWORD });
+    const req = https.request({
+      hostname: 'api-prod.migros.com.tr', port: 443,
+      path: '/rest/b2b/api/v1/auth/login', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
       timeout: 30000
-    };
-
-    https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
       res.on('end', () => {
         try {
-          const response = JSON.parse(data);
-          if (response.token) {
-            token = response.token;
-            connectionCodeRaw = response.connectionCode || '';
-            console.log('✅ Login başarılı');
-            resolve(true);
-          } else {
-            console.error('❌ Login başarısız:', response.message);
-            resolve(false);
-          }
-        } catch (err) {
-          console.error('❌ Login parse hatası');
-          resolve(false);
-        }
+          const r = JSON.parse(d);
+          if (r.token) { token = r.token; connectionCodeRaw = r.connectionCode||''; console.log('✅ Login başarılı'); resolve(true); }
+          else { console.error('❌ Login başarısız:', r.message); resolve(false); }
+        } catch(e) { resolve(false); }
       });
-    }).on('error', (err) => {
-      console.error('❌ Login bağlantı hatası:', err.message);
-      resolve(false);
-    }).on('timeout', () => {
-      console.error('❌ Login timeout');
-      resolve(false);
-    }).end(postData);
+    });
+    req.on('error',   () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.end(postData);
   });
 }
 
 // API'den veri çek
-async function fetchData(endpoint, reportName) {
-  return new Promise(async (resolve) => {
-    if (!token) {
-      console.error(`❌ ${reportName}: Token yok`);
-      resolve(null);
-      return;
-    }
-
-    const hashedConnectionCode = await sha1(connectionCodeRaw + CONFIG.USERNAME);
-
-    const options = {
-      hostname: 'api-prod.migros.com.tr',
-      port: 443,
-      path: '/rest/b2b/api/v1' + endpoint,
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': token,
-        'ConnectionCode': hashedConnectionCode
-      },
-      timeout: 120000
-    };
-
-    https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const response = JSON.parse(data);
-          if (response.data) {
-            console.log(`✅ ${reportName}: ${response.data.length} kayıt çekildi`);
-            resolve(response);
-          } else {
-            console.error(`❌ ${reportName}: ${JSON.stringify(response).slice(0,200)}`);
-            resolve(null);
-          }
-        } catch (err) {
-          console.error(`❌ ${reportName}: Parse hatası`);
-          resolve(null);
-        }
-      });
-    }).on('error', (err) => {
-      console.error(`❌ ${reportName}: ${err.message}`);
-      resolve(null);
-    }).on('timeout', () => {
-      console.error(`❌ ${reportName}: Timeout`);
-      resolve(null);
-    }).end();
-  });
-}
-
-// Tabloya eksik kolonları ekle
-function ensureColumns(tableName, keys) {
+function fetchData(endpoint, reportName) {
   return new Promise(resolve => {
-    db.all(`PRAGMA table_info(${tableName})`, (err, cols) => {
-      if (err) { resolve(); return; }
-      const existing = new Set(cols.map(c => c.name));
-      const missing = keys.filter(k => !existing.has(k));
-      if (!missing.length) { resolve(); return; }
-      let done = 0;
-      missing.forEach(col => {
-        db.run(`ALTER TABLE ${tableName} ADD COLUMN "${col}" TEXT`, () => {
-          if (++done === missing.length) resolve();
-        });
+    if (!token) { resolve(null); return; }
+    const cc = sha1(connectionCodeRaw + CONFIG.USERNAME);
+    let sent = false;
+    const req = https.request({
+      hostname: 'api-prod.migros.com.tr', port: 443,
+      path: '/rest/b2b/api/v1' + endpoint, method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': cc },
+      timeout: 120000
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        if (sent) return; sent = true;
+        try {
+          const r = JSON.parse(d);
+          if (r.data) { console.log(`✅ ${reportName}: ${r.data.length} kayıt`); resolve(r); }
+          else { console.error(`❌ ${reportName}:`, JSON.stringify(r).slice(0,200)); resolve(null); }
+        } catch(e) { console.error(`❌ ${reportName}: Parse hatası`); resolve(null); }
       });
     });
+    req.on('error',   () => { if (!sent) { sent=true; resolve(null); } });
+    req.on('timeout', () => { if (!sent) { sent=true; req.destroy(); console.error(`❌ ${reportName}: Timeout`); resolve(null); } });
+    req.end();
   });
 }
 
-// Database'e kaydet
-function saveToDatabase(tableName, data) {
-  return new Promise(async (resolve) => {
-    if (!data || data.length === 0) { resolve(0); return; }
+// Tabloya eksik kolon ekle
+async function ensureColumns(tableName, keys) {
+  for (const col of keys) {
+    try {
+      await pool.query(`ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS "${col}" TEXT`);
+    } catch(e) { /* zaten var */ }
+  }
+}
 
-    const keys = Object.keys(data[0]);
-    await ensureColumns(tableName, keys);
+// DB'ye kaydet
+async function saveToDatabase(tableName, data) {
+  if (!data || !data.length) return 0;
+  const keys = Object.keys(data[0]);
+  await ensureColumns(tableName, keys);
+  let count = 0;
+  const cols = keys.map(k => '"' + k + '"').join(',');
+  const placeholders = keys.map((_, i) => '$' + (i+1)).join(',');
+  for (const row of data) {
+    const values = keys.map(k => row[k] !== undefined ? row[k] : null);
+    try {
+      const r = await pool.query(`INSERT INTO ${tableName} (${cols}) VALUES (${placeholders})`, values);
+      count += r.rowCount;
+    } catch(e) { /* skip */ }
+  }
+  return count;
+}
 
-    let insertedCount = 0;
-    const placeholders = keys.map(() => '?').join(',');
-    const columns = keys.map(k => '"' + k + '"').join(',');
-
-    const stmt = db.prepare(
-      `INSERT OR IGNORE INTO ${tableName} (${columns}) VALUES (${placeholders})`
+// Log ekle
+async function logToDb(raporAdi, durum, satirSayisi, mesaj) {
+  try {
+    await pool.query(
+      'INSERT INTO cekme_loglari (raport_adi, durum, satir_sayisi, mesaj) VALUES ($1,$2,$3,$4)',
+      [raporAdi, durum, satirSayisi, mesaj]
     );
-
-    data.forEach(row => {
-      const values = keys.map(key => row[key]);
-      stmt.run(values, function(err) {
-        if (!err && this.changes > 0) insertedCount++;
-      });
-    });
-
-    stmt.finalize(() => resolve(insertedCount));
-  });
-}
-
-// Log kaydı
-function logToDatabase(raporAdi, durum, satirSayisi, mesaj) {
-  db.run(
-    'INSERT INTO cekme_loglari (raport_adi, durum, satir_sayisi, mesaj) VALUES (?, ?, ?, ?)',
-    [raporAdi, durum, satirSayisi, mesaj],
-    (err) => {
-      if (err) console.error('Log kaydı hatası:', err);
-    }
-  );
+  } catch(e) {}
 }
 
 // Günlük Satış çek
 async function fetchGunlukSatis() {
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-  const raporBaslangic = yesterday.toISOString().split('T')[0];
-  const raporBitis = raporBaslangic;
-
-  const endpoint = `/report/get-gunluk-satis?pageno=1&raporBaslangic=${raporBaslangic}&raporBitis=${raporBitis}&saticild=${CONFIG.SATICI_ID}`;
-  const response = await fetchData(endpoint, 'Günlük Satış');
-  
-  if (response && response.data) {
-    let flatData = response.data;
-    if (response.data.length > 0 && response.data[0].SalesList) {
-      flatData = response.data.flatMap(item => item.SalesList || []);
-    }
-    const savedCount = await saveToDatabase('gunluk_satis', flatData);
-    return savedCount;
-  }
-  return 0;
-}
-
-// İşletici Satış çek
-async function fetchIsleticiSatis() {
-  const today = new Date();
-  const raporBaslangic = today.toISOString().split('T')[0].split('-').reverse().join('.');
-  const raporBitis = raporBaslangic;
-
-  const endpoint = `/isleticirapor/rapor?pageno=1&raporBaslangic=${raporBaslangic}&raporBitis=${raporBitis}&saticiid=${CONFIG.SATICI_ID}`;
-  const response = await fetchData(endpoint, 'İşletici Satış');
-  
-  if (response && response.data) {
-    let flatData = response.data;
-    if (response.data.length > 0 && response.data[0].SalesList) {
-      flatData = response.data.flatMap(item => item.SalesList || []);
-    }
-    const savedCount = await saveToDatabase('isletici_satis', flatData);
-    return savedCount;
-  }
-  return 0;
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  const r = await fetchData(
+    `/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticild=${CONFIG.SATICI_ID}`,
+    'Günlük Satış'
+  );
+  if (!r || !r.data) return 0;
+  let flat = r.data;
+  if (flat.length > 0 && flat[0].SalesList) flat = flat.flatMap(i => i.SalesList || []);
+  return saveToDatabase('gunluk_satis', flat);
 }
 
 // Stok çek
 async function fetchStok() {
-  const endpoint = `/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`;
-  const response = await fetchData(endpoint, 'Stok');
-  
-  if (response && response.data) {
-    const savedCount = await saveToDatabase('stok', response.data);
-    return savedCount;
-  }
-  return 0;
+  const r = await fetchData(
+    `/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`,
+    'Stok'
+  );
+  if (!r || !r.data) return 0;
+  return saveToDatabase('stok', r.data);
 }
 
-// Günlük Satış çekme
+// Günlük Satış çalıştır
 async function runGunlukSatis() {
   console.log('\n📊 Günlük Satış çekme başladı:', new Date().toLocaleString('tr-TR'));
-  const loginSuccess = await login();
-  if (!loginSuccess) {
-    logToDatabase('Günlük Satış', 'BAŞARISIZ', 0, 'Login başarısız');
-    return;
-  }
+  const ok = await login();
+  if (!ok) { await logToDb('Günlük Satış', 'BAŞARISIZ', 0, 'Login başarısız'); return; }
   try {
-    console.log('📥 Günlük Satış çekiliyor...');
     const count = await fetchGunlukSatis();
     console.log(`   → Günlük Satış: ${count} kayıt`);
-    logToDatabase('Günlük Satış', 'BAŞARILI', count, `Günlük Satış: ${count}`);
-  } catch (err) {
-    console.error('❌ Günlük Satış hatası:', err.message);
-    logToDatabase('Günlük Satış', 'HATA', 0, err.message);
+    await logToDb('Günlük Satış', 'BAŞARILI', count, `Günlük Satış: ${count}`);
+  } catch(e) {
+    console.error('❌ Günlük Satış hatası:', e.message);
+    await logToDb('Günlük Satış', 'HATA', 0, e.message);
   }
 }
 
-// Stok çekme
+// Stok çalıştır
 async function runStok() {
   console.log('\n📦 Stok çekme başladı:', new Date().toLocaleString('tr-TR'));
-  const loginSuccess = await login();
-  if (!loginSuccess) {
-    logToDatabase('Stok', 'BAŞARISIZ', 0, 'Login başarısız');
-    return;
-  }
+  const ok = await login();
+  if (!ok) { await logToDb('Stok', 'BAŞARISIZ', 0, 'Login başarısız'); return; }
   try {
-    console.log('📥 Stok çekiliyor...');
     const count = await fetchStok();
     console.log(`   → Stok: ${count} kayıt`);
-    logToDatabase('Stok', 'BAŞARILI', count, `Stok: ${count}`);
-  } catch (err) {
-    console.error('❌ Stok hatası:', err.message);
-    logToDatabase('Stok', 'HATA', 0, err.message);
+    await logToDb('Stok', 'BAŞARILI', count, `Stok: ${count}`);
+  } catch(e) {
+    console.error('❌ Stok hatası:', e.message);
+    await logToDb('Stok', 'HATA', 0, e.message);
   }
 }
 
 // Scheduler — Günlük Satış 06:00, Stok 06:15
 function startScheduler() {
   console.log('\n⏰ Scheduler başladı. Günlük Satış: 06:00 | Stok: 06:15\n');
-
   setInterval(() => {
-    const now = new Date();
-    const h = now.getHours();
-    const m = now.getMinutes();
+    const h = new Date().getHours();
+    const m = new Date().getMinutes();
     if (h === 6 && m === 0)  runGunlukSatis();
     if (h === 6 && m === 15) runStok();
   }, 60000);
 }
 
-// Ana başlangıç
 async function start() {
   console.log(`
 ============================================================
 🚀 Migros B2B Otomatik Veri Çekme Agenti
 ============================================================
-📁 Database: ${CONFIG.DB_PATH}
 👤 Kullanıcı: ${CONFIG.USERNAME}
 🏢 Satıcı ID: ${CONFIG.SATICI_ID}
-⏰ Çekme saatleri: ${CONFIG.CHECK_HOURS.map(h => h + ':00').join(', ')}
+⏰ Günlük Satış: 06:00 | Stok: 06:15
 🌍 Environment: ${CONFIG.NODE_ENV}
 ============================================================
   `);
-
   try {
     await initDatabase();
     startScheduler();
-  } catch (err) {
-    console.error('❌ Agent başlama hatası:', err);
+  } catch(e) {
+    console.error('❌ Agent başlama hatası:', e);
     process.exit(1);
   }
 }
-
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n\n👋 Agent kapatılıyor...');
-  if (db) {
-    db.close((err) => {
-      if (err) console.error(err);
-      else console.log('✅ Database bağlantısı kapatıldı');
-      process.exit(0);
-    });
-  } else {
-    process.exit(0);
-  }
-});
 
 start();
