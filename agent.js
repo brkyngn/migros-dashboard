@@ -315,54 +315,54 @@ async function fetchStok() {
   return 0;
 }
 
-// Günlük çekme
-async function runDailyCollection() {
-  console.log('\n📊 Günlük veri çekme başladı:', new Date().toLocaleString('tr-TR'));
-  
+// Günlük Satış çekme
+async function runGunlukSatis() {
+  console.log('\n📊 Günlük Satış çekme başladı:', new Date().toLocaleString('tr-TR'));
   const loginSuccess = await login();
   if (!loginSuccess) {
-    logToDatabase('Tüm Raporlar', 'BAŞARISIZ', 0, 'Login başarısız');
-    console.log('❌ Login başarısız - çekme iptal edildi');
+    logToDatabase('Günlük Satış', 'BAŞARISIZ', 0, 'Login başarısız');
     return;
   }
-
   try {
     console.log('📥 Günlük Satış çekiliyor...');
-    const gunlukCount = await fetchGunlukSatis();
-    console.log(`   → Günlük Satış: ${gunlukCount} kayıt`);
-
-    console.log('📥 Stok çekiliyor...');
-    const stokCount = await fetchStok();
-    console.log(`   → Stok: ${stokCount} kayıt`);
-
-    const totalCount = gunlukCount + stokCount;
-    console.log(`✅ Günlük çekme tamamlandı: ${totalCount} kayıt kaydedildi\n`);
-
-    logToDatabase('Tüm Raporlar', 'BAŞARILI', totalCount,
-      `Günlük Satış: ${gunlukCount}, Stok: ${stokCount}`);
+    const count = await fetchGunlukSatis();
+    console.log(`   → Günlük Satış: ${count} kayıt`);
+    logToDatabase('Günlük Satış', 'BAŞARILI', count, `Günlük Satış: ${count}`);
   } catch (err) {
-    console.error('❌ Çekme hatası:', err.message);
-    logToDatabase('Tüm Raporlar', 'HATA', 0, err.message);
+    console.error('❌ Günlük Satış hatası:', err.message);
+    logToDatabase('Günlük Satış', 'HATA', 0, err.message);
   }
 }
 
-// Scheduler
+// Stok çekme
+async function runStok() {
+  console.log('\n📦 Stok çekme başladı:', new Date().toLocaleString('tr-TR'));
+  const loginSuccess = await login();
+  if (!loginSuccess) {
+    logToDatabase('Stok', 'BAŞARISIZ', 0, 'Login başarısız');
+    return;
+  }
+  try {
+    console.log('📥 Stok çekiliyor...');
+    const count = await fetchStok();
+    console.log(`   → Stok: ${count} kayıt`);
+    logToDatabase('Stok', 'BAŞARILI', count, `Stok: ${count}`);
+  } catch (err) {
+    console.error('❌ Stok hatası:', err.message);
+    logToDatabase('Stok', 'HATA', 0, err.message);
+  }
+}
+
+// Scheduler — Günlük Satış 06:00, Stok 06:15
 function startScheduler() {
-  console.log(`\n⏰ Scheduler başladı. Çekme saatleri: ${CONFIG.CHECK_HOURS.map(h => h + ':00').join(', ')}`);
-  console.log('💡 İlk çekme hemen yapılacak...\n');
+  console.log('\n⏰ Scheduler başladı. Günlük Satış: 06:00 | Stok: 06:15\n');
 
-  // İlk çekmeyi hemen yap
-  runDailyCollection();
-
-  // Her dakika kontrol et
   setInterval(() => {
     const now = new Date();
-    const currentHour = now.getHours();
-    const minutes = now.getMinutes();
-
-    if (CONFIG.CHECK_HOURS.includes(currentHour) && minutes === 0) {
-      runDailyCollection();
-    }
+    const h = now.getHours();
+    const m = now.getMinutes();
+    if (h === 6 && m === 0)  runGunlukSatis();
+    if (h === 6 && m === 15) runStok();
   }, 60000);
 }
 

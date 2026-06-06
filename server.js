@@ -323,6 +323,99 @@ app.get('/isleticirapor/*', (req, res) => {
 // ========== API ENDPOINTS ==========
 
 // ========== MANUEL AGENT TETİKLEME ==========
+
+// Ortak: Migros'a bağlan ve veri çek
+async function agentFetch(endpoint, name) {
+  const crypto = require('crypto');
+  const sha1 = str => crypto.createHash('sha1').update(str).digest('hex');
+
+  let agentToken = '', agentCC = '';
+  await new Promise(resolve => {
+    const postData = JSON.stringify({ username: CONFIG.USERNAME, password: CONFIG.PASSWORD });
+    const req2 = https.request({
+      hostname: 'api-prod.migros.com.tr', port: 443,
+      path: '/rest/b2b/api/v1/auth/login', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
+      timeout: 30000
+    }, res2 => {
+      let d = '';
+      res2.on('data', c => d += c);
+      res2.on('end', () => {
+        try {
+          const r = JSON.parse(d);
+          if (r.token) { agentToken = r.token; agentCC = r.connectionCode || ''; console.log('✅ Agent login başarılı'); }
+          else console.error('❌ Agent login başarısız:', r.message);
+        } catch(e) {}
+        resolve();
+      });
+    });
+    req2.on('error', () => resolve());
+    req2.on('timeout', () => { req2.destroy(); resolve(); });
+    req2.end(postData);
+  });
+
+  if (!agentToken) return null;
+
+  return new Promise(async resolve => {
+    const cc = sha1(agentCC + CONFIG.USERNAME);
+    let sent = false;
+    const req3 = https.request({
+      hostname: 'api-prod.migros.com.tr', port: 443,
+      path: '/rest/b2b/api/v1' + endpoint, method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'Authorization': agentToken, 'ConnectionCode': cc },
+      timeout: 120000
+    }, res3 => {
+      let d = '';
+      res3.on('data', c => d += c);
+      res3.on('end', () => {
+        if (sent) return; sent = true;
+        try {
+          const r = JSON.parse(d);
+          if (r.data) { console.log(`✅ ${name}: ${r.data.length} kayıt`); resolve(r); }
+          else { console.error(`❌ ${name}:`, JSON.stringify(r).slice(0,200)); resolve(null); }
+        } catch(e) { resolve(null); }
+      });
+    });
+    req3.on('error', e => { if (!sent) { sent=true; resolve(null); } });
+    req3.on('timeout', () => { if (!sent) { sent=true; req3.destroy(); console.error(`❌ ${name}: Timeout`); resolve(null); } });
+    req3.end();
+  });
+}
+
+// Stok çek
+app.post('/api/agent-stok', async (req, res) => {
+  console.log('🔧 Manuel Stok çekme tetiklendi');
+  res.json({ status: 'started', message: 'Stok çekme başladı.' });
+  (async () => {
+    const stokRes = await agentFetch(`/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`, 'Stok');
+    let count = 0;
+    if (stokRes && stokRes.data) count = await saveToDatabase('stok', stokRes.data);
+    console.log(`✅ Stok tamamlandı: ${count} kayıt`);
+    db.run('INSERT INTO cekme_loglari (raport_adi, durum, satir_sayisi, mesaj) VALUES (?,?,?,?)',
+      ['Manuel Stok', count > 0 ? 'BAŞARILI' : 'BAŞARISIZ', count, `Stok: ${count}`]);
+  })();
+});
+
+// Günlük Satış çek
+app.post('/api/agent-gunluk', async (req, res) => {
+  console.log('🔧 Manuel Günlük Satış çekme tetiklendi');
+  res.json({ status: 'started', message: 'Günlük Satış çekme başladı.' });
+  (async () => {
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    const gunlukRes = await agentFetch(`/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticild=${CONFIG.SATICI_ID}`, 'Günlük Satış');
+    let count = 0;
+    if (gunlukRes && gunlukRes.data) {
+      let flat = gunlukRes.data;
+      if (flat.length > 0 && flat[0].SalesList) flat = flat.flatMap(i => i.SalesList || []);
+      count = await saveToDatabase('gunluk_satis', flat);
+    }
+    console.log(`✅ Günlük Satış tamamlandı: ${count} kayıt`);
+    db.run('INSERT INTO cekme_loglari (raport_adi, durum, satir_sayisi, mesaj) VALUES (?,?,?,?)',
+      ['Manuel Günlük Satış', count > 0 ? 'BAŞARILI' : 'BAŞARISIZ', count, `Günlük Satış: ${count}`]);
+  })();
+});
+
+// Eski genel endpoint (geriye uyumluluk)
 app.post('/api/agent-calistir', async (req, res) => {
   console.log('🔧 Manuel agent tetiklendi');
   res.json({ status: 'started', message: 'Veri çekme başladı, logları /api/cekme-loglari adresinden takip edin.' });

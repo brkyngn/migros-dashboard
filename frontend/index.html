@@ -86,8 +86,9 @@
                         <h1>📊 Migros B2B Rapor Yönetimi</h1>
                         <p id="welcomeText">Hoş geldiniz</p>
                     </div>
-                    <div style="display:flex;gap:.75rem;align-items:center;">
-                        <button id="agentBtn" class="btn-success" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem;">🔄 Veriyi Güncelle</button>
+                    <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;">
+                        <button id="stokBtn" class="btn-success" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem;">📦 Stok Çek</button>
+                        <button id="gunlukBtn" class="btn-success" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem;">📈 Günlük Satış Çek</button>
                         <button id="logoutBtn" style="width:auto;padding:.6rem 1.2rem;">🚪 Çıkış Yap</button>
                     </div>
                 </div>
@@ -180,19 +181,41 @@
             }
         });
 
-        document.getElementById('agentBtn').addEventListener('click', async () => {
-            const btn = document.getElementById('agentBtn');
+        function startCountdown(btn, label, seconds) {
             btn.disabled = true;
-            btn.textContent = '⏳ Çekiliyor...';
+            var remaining = seconds;
+            var interval = setInterval(function() {
+                var m = Math.floor(remaining / 60);
+                var s = remaining % 60;
+                btn.textContent = '⏳ ' + m + ':' + (s < 10 ? '0' : '') + s;
+                remaining--;
+                if (remaining < 0) {
+                    clearInterval(interval);
+                    btn.disabled = false;
+                    btn.textContent = label;
+                }
+            }, 1000);
+        }
+
+        document.getElementById('stokBtn').addEventListener('click', async function() {
+            var btn = document.getElementById('stokBtn');
             try {
-                const res = await fetch('/api/agent-calistir', { method: 'POST' });
-                const data = await res.json();
-                showAlert('success', '✅ Veri çekme başladı! 2-3 dakika bekleyin, sonra raporu yenileyin. Loglar: /api/cekme-loglari');
-                setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Veriyi Güncelle'; }, 10000);
+                await fetch('/api/agent-stok', { method: 'POST' });
+                showAlert('success', '✅ Stok çekme başladı! Loglar için: /api/cekme-loglari');
+                startCountdown(btn, '📦 Stok Çek', 600);
             } catch(e) {
                 showAlert('error', 'Hata: ' + e.message);
-                btn.disabled = false;
-                btn.textContent = '🔄 Veriyi Güncelle';
+            }
+        });
+
+        document.getElementById('gunlukBtn').addEventListener('click', async function() {
+            var btn = document.getElementById('gunlukBtn');
+            try {
+                await fetch('/api/agent-gunluk', { method: 'POST' });
+                showAlert('success', '✅ Günlük Satış çekme başladı! Loglar için: /api/cekme-loglari');
+                startCountdown(btn, '📈 Günlük Satış Çek', 600);
+            } catch(e) {
+                showAlert('error', 'Hata: ' + e.message);
             }
         });
 
