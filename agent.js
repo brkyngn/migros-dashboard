@@ -194,7 +194,7 @@ async function fetchData(endpoint, reportName) {
             console.log(`✅ ${reportName}: ${response.data.length} kayıt çekildi`);
             resolve(response);
           } else {
-            console.error(`❌ ${reportName}: ${response.message}`);
+            console.error(`❌ ${reportName}: ${JSON.stringify(response).slice(0,200)}`);
             resolve(null);
           }
         } catch (err) {
@@ -320,14 +320,22 @@ async function runDailyCollection() {
   }
 
   try {
+    console.log('📥 Günlük Satış çekiliyor...');
     const gunlukCount = await fetchGunlukSatis();
+    console.log(`   → Günlük Satış: ${gunlukCount} kayıt`);
+
+    console.log('📥 İşletici Satış çekiliyor...');
     const isleticiCount = await fetchIsleticiSatis();
+    console.log(`   → İşletici Satış: ${isleticiCount} kayıt`);
+
+    console.log('📥 Stok çekiliyor...');
     const stokCount = await fetchStok();
+    console.log(`   → Stok: ${stokCount} kayıt`);
 
     const totalCount = gunlukCount + isleticiCount + stokCount;
     console.log(`✅ Günlük çekme tamamlandı: ${totalCount} kayıt kaydedildi\n`);
-    
-    logToDatabase('Tüm Raporlar', 'BAŞARILI', totalCount, 
+
+    logToDatabase('Tüm Raporlar', 'BAŞARILI', totalCount,
       `Günlük Satış: ${gunlukCount}, İşletici Satış: ${isleticiCount}, Stok: ${stokCount}`);
   } catch (err) {
     console.error('❌ Çekme hatası:', err.message);
