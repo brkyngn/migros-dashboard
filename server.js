@@ -259,6 +259,35 @@ app.post('/api/kaydet-stok', async (req, res) => {
   } catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
+// Excel'den geçmiş satış içe aktarma
+app.post('/api/import-excel-satis', async (req, res) => {
+  const data = req.body.data;
+  if (!data || !data.length) return res.json({ inserted: 0 });
+  try {
+    // gunluk_satis tablosunda gerekli kolonları güvenceye al
+    const keyCols = ['DateTransaction','SupplierName','SupplierItemNumber','ItemNumber',
+      'SupplierItemName','BarcodeNumber','StoreName','StoreNumber',
+      'QuantitySold','TotalWeight','NetSalesValue','Metrics'];
+    await ensureColumns('gunluk_satis', keyCols);
+
+    let inserted = 0;
+    for (const row of data) {
+      const cols = Object.keys(row).map(k => '"' + k + '"').join(',');
+      const vals = Object.keys(row).map((_, i) => '$' + (i + 1)).join(',');
+      const values = Object.values(row).map(v => v === '' ? null : v);
+      try {
+        const r = await pool.query(
+          `INSERT INTO gunluk_satis (${cols}) VALUES (${vals})`, values
+        );
+        inserted += r.rowCount;
+      } catch(e) { /* satır zaten var veya format hatası, atla */ }
+    }
+    res.json({ success: true, inserted });
+  } catch(e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
 app.post('/api/kaydet-gunluk', async (req, res) => {
   let data = req.body.data;
   if (!data || !data.length) return res.json({ success: false, message: 'Veri yok' });

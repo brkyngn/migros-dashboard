@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Migros B2B Rapor Yönetimi</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
     <style>
@@ -92,6 +93,22 @@
                         <button id="logoutBtn" style="width:auto;padding:.6rem 1.2rem;">🚪 Çıkış Yap</button>
                     </div>
                 </div>
+            </div>
+
+            <!-- Excel Import -->
+            <div class="card" style="margin-bottom:1rem;border:2px dashed #d1d5db;">
+                <h2 style="margin-bottom:.75rem;font-size:.95rem;">📂 Excel'den Geçmiş Satış İçe Aktar</h2>
+                <p style="font-size:.8rem;color:#6b7280;margin-bottom:1rem;">
+                    Migros B2B panelinden indirilen satış Excel dosyasını yükle. Kolonlar otomatik eşlenir ve veritabanına kaydedilir.
+                </p>
+                <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap;">
+                    <input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv" style="font-size:.85rem;">
+                    <button id="excelImportBtn" class="btn-success" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem;" disabled>
+                        📥 İçe Aktar
+                    </button>
+                    <span id="excelStatus" style="font-size:.85rem;color:#6b7280;"></span>
+                </div>
+                <div id="excelPreview" style="margin-top:.75rem;font-size:.8rem;color:#374151;"></div>
             </div>
 
             <div class="tabs">
@@ -1106,6 +1123,108 @@
             link.download = `migros_${activeTab}_${new Date().toISOString().split('T')[0]}.csv`;
             link.click();
         });
+
+        // ── EXCEL IMPORT ──────────────────────────────────────
+        var excelRows = [];
+
+        document.getElementById('excelFileInput').addEventListener('change', function(e) {
+            var file = e.target.files[0];
+            if (!file) return;
+            var status = document.getElementById('excelStatus');
+            var btn = document.getElementById('excelImportBtn');
+            status.textContent = '⏳ Dosya okunuyor...';
+            btn.disabled = true;
+            excelRows = [];
+
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                try {
+                    var wb = XLSX.read(ev.target.result, { type: 'binary', cellDates: true });
+                    var ws = wb.Sheets[wb.SheetNames[0]];
+                    var raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+                    // Kolon eşleme
+                    excelRows = raw.map(function(r) {
+                        // Tarih alanı — Excel'de "Gün_" ya da varyantları
+                        var tarihRaw = r['Gün_'] || r['Gun_'] || r['Gün'] || r['Tarih'] || r['Date'] || '';
+                        var tarih = '';
+                        if (tarihRaw instanceof Date) {
+                            tarih = tarihRaw.toISOString().split('T')[0];
+                        } else if (typeof tarihRaw === 'number') {
+                            // Excel serial date
+                            var d = new Date((tarihRaw - 25569) * 86400000);
+                            tarih = d.toISOString().split('T')[0];
+                        } else {
+                            tarih = String(tarihRaw).trim();
+                        }
+
+                        return {
+                            DateTransaction:     tarih,
+                            SupplierName:        String(r['Satıcı'] || r['Satici'] || '').trim(),
+                            SupplierItemNumber:  String(r['Satıcı Ürün Kodu'] || r['Satici Urun Kodu'] || '').trim(),
+                            ItemNumber:          String(r['Alıcı Ürün Kodu'] || r['Alici Urun Kodu'] || '').trim(),
+                            SupplierItemName:    String(r['Satıcı Ürün Adı'] || r['Satici Urun Adi'] || '').trim(),
+                            BarcodeNumber:       String(r['Barkod'] || '').trim(),
+                            StoreName:           String(r['Mağaza'] || r['Magaza'] || '').trim(),
+                            StoreNumber:         String(r['Mağaza İşyeri Numarası'] || r['Magaza Isyeri Numarasi'] || '').trim(),
+                            QuantitySold:        String(r['Satış Miktarı'] || r['Satis Miktari'] || '').trim(),
+                            TotalWeight:         String(r['Kg/Lt'] || '').trim(),
+                            NetSalesValue:       String(r['Net Satis Tutari (TL)'] || r['Net Satış Tutarı (TL)'] || '').trim(),
+                            Metrics:             String(r['Metrics'] || '').trim(),
+                        };
+                    }).filter(function(r) { return r.DateTransaction && r.SupplierItemNumber; });
+
+                    status.textContent = '✅ ' + excelRows.length + ' satır hazır';
+                    document.getElementById('excelPreview').innerHTML =
+                        '<strong>İlk 3 satır önizleme:</strong><br>' +
+                        excelRows.slice(0, 3).map(function(r) {
+                            return '📅 ' + r.DateTransaction + ' · ' + r.SupplierItemName + ' · Adet: ' + r.QuantitySold + ' · Tutar: ' + r.NetSalesValue;
+                        }).join('<br>');
+                    btn.disabled = false;
+                } catch(err) {
+                    status.textContent = '❌ Hata: ' + err.message;
+                }
+            };
+            reader.readAsBinaryString(file);
+        });
+
+        document.getElementById('excelImportBtn').addEventListener('click', async function() {
+            if (!excelRows.length) return;
+            var btn = document.getElementById('excelImportBtn');
+            var status = document.getElementById('excelStatus');
+            btn.disabled = true;
+            status.textContent = '⏳ Kaydediliyor (' + excelRows.length + ' satır)...';
+
+            // Büyük veriyi 500'lük gruplara bölerek gönder
+            var chunkSize = 500;
+            var totalSaved = 0;
+            var chunks = Math.ceil(excelRows.length / chunkSize);
+
+            for (var i = 0; i < chunks; i++) {
+                var chunk = excelRows.slice(i * chunkSize, (i + 1) * chunkSize);
+                status.textContent = '⏳ Kaydediliyor... (' + ((i+1)) + '/' + chunks + ')';
+                try {
+                    var res = await fetch('/api/import-excel-satis', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ data: chunk })
+                    });
+                    var result = await res.json();
+                    totalSaved += result.inserted || 0;
+                } catch(e) {
+                    status.textContent = '❌ Hata: ' + e.message;
+                    btn.disabled = false;
+                    return;
+                }
+            }
+
+            status.textContent = '✅ Tamamlandı! ' + totalSaved + ' yeni kayıt eklendi.';
+            document.getElementById('excelPreview').innerHTML = '';
+            excelRows = [];
+            btn.disabled = true;
+            showAlert('success', '✅ Excel içe aktarma tamamlandı: ' + totalSaved + ' kayıt veritabanına eklendi.');
+        });
+        // ─────────────────────────────────────────────────────
 
         async function kaydetDB(tip) {
             if (!currentData || !currentData.data || !currentData.data.length) {
