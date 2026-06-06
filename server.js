@@ -315,6 +315,108 @@ app.get('/isleticirapor/*', (req, res) => {
 
 // ========== API ENDPOINTS ==========
 
+// ========== MANUEL AGENT TETİKLEME ==========
+app.post('/api/agent-calistir', async (req, res) => {
+  console.log('🔧 Manuel agent tetiklendi');
+  res.json({ status: 'started', message: 'Veri çekme başladı, logları /api/cekme-loglari adresinden takip edin.' });
+
+  // Arka planda çalıştır
+  (async () => {
+    const crypto = require('crypto');
+    const sha1 = str => crypto.createHash('sha1').update(str).digest('hex');
+
+    // Login
+    let agentToken = '', agentCC = '';
+    await new Promise(resolve => {
+      const postData = JSON.stringify({ username: CONFIG.USERNAME, password: CONFIG.PASSWORD });
+      const req2 = https.request({
+        hostname: 'api-prod.migros.com.tr', port: 443,
+        path: '/rest/b2b/api/v1/auth/login', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
+        timeout: 30000
+      }, res2 => {
+        let d = '';
+        res2.on('data', c => d += c);
+        res2.on('end', () => {
+          try {
+            const r = JSON.parse(d);
+            if (r.token) { agentToken = r.token; agentCC = r.connectionCode || ''; console.log('✅ Agent login başarılı'); }
+            else console.error('❌ Agent login başarısız:', r.message);
+          } catch(e) { console.error('❌ Agent login parse hatası'); }
+          resolve();
+        });
+      });
+      req2.on('error', e => { console.error('❌ Agent login bağlantı hatası:', e.message); resolve(); });
+      req2.on('timeout', () => { console.error('❌ Agent login timeout'); req2.destroy(); resolve(); });
+      req2.end(postData);
+    });
+
+    if (!agentToken) {
+      db.run('INSERT INTO cekme_loglari (raport_adi, durum, satir_sayisi, mesaj) VALUES (?,?,?,?)',
+        ['Manuel Çekme', 'BAŞARISIZ', 0, 'Login başarısız']);
+      return;
+    }
+
+    const fetchAgent = (endpoint, name) => new Promise(async resolve => {
+      const cc = sha1(agentCC + CONFIG.USERNAME);
+      let sent2 = false;
+      const req3 = https.request({
+        hostname: 'api-prod.migros.com.tr', port: 443,
+        path: `/rest/b2b/api/v1${endpoint}`, method: 'GET',
+        headers: { 'Content-Type': 'application/json', 'Authorization': agentToken, 'ConnectionCode': cc },
+        timeout: 120000
+      }, res3 => {
+        let d = '';
+        res3.on('data', c => d += c);
+        res3.on('end', () => {
+          if (sent2) return; sent2 = true;
+          try {
+            const r = JSON.parse(d);
+            if (r.data) { console.log(`✅ ${name}: ${r.data.length} kayıt`); resolve(r); }
+            else { console.error(`❌ ${name}:`, JSON.stringify(r).slice(0,150)); resolve(null); }
+          } catch(e) { console.error(`❌ ${name} parse hatası`); resolve(null); }
+        });
+      });
+      req3.on('error', e => { if (!sent2) { sent2=true; console.error(`❌ ${name}:`, e.message); resolve(null); } });
+      req3.on('timeout', () => { if (!sent2) { sent2=true; req3.destroy(); console.error(`❌ ${name}: Timeout`); resolve(null); } });
+      req3.end();
+    });
+
+    let gunlukCount=0, isleticiCount=0, stokCount=0;
+
+    // Stok
+    console.log('📥 Stok çekiliyor...');
+    const stokRes = await fetchAgent(`/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`, 'Stok');
+    if (stokRes && stokRes.data) stokCount = await saveToDatabase('stok', stokRes.data);
+
+    // İşletici Satış
+    console.log('📥 İşletici Satış çekiliyor...');
+    const today = new Date().toISOString().split('T')[0].split('-').reverse().join('.');
+    const isleticiRes = await fetchAgent(`/isleticirapor/rapor?pageno=1&raporBaslangic=${today}&raporBitis=${today}&saticiid=${CONFIG.SATICI_ID}`, 'İşletici Satış');
+    if (isleticiRes && isleticiRes.data) {
+      let flat = isleticiRes.data;
+      if (flat.length > 0 && flat[0].SalesList) flat = flat.flatMap(i => i.SalesList || []);
+      isleticiCount = await saveToDatabase('isletici_satis', flat);
+    }
+
+    // Günlük Satış
+    console.log('📥 Günlük Satış çekiliyor...');
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    const gunlukRes = await fetchAgent(`/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticild=${CONFIG.SATICI_ID}`, 'Günlük Satış');
+    if (gunlukRes && gunlukRes.data) {
+      let flat = gunlukRes.data;
+      if (flat.length > 0 && flat[0].SalesList) flat = flat.flatMap(i => i.SalesList || []);
+      gunlukCount = await saveToDatabase('gunluk_satis', flat);
+    }
+
+    const total = gunlukCount + isleticiCount + stokCount;
+    const mesaj = `Günlük Satış: ${gunlukCount}, İşletici Satış: ${isleticiCount}, Stok: ${stokCount}`;
+    console.log(`✅ Manuel çekme tamamlandı: ${total} kayıt — ${mesaj}`);
+    db.run('INSERT INTO cekme_loglari (raport_adi, durum, satir_sayisi, mesaj) VALUES (?,?,?,?)',
+      ['Manuel Çekme', 'BAŞARILI', total, mesaj]);
+  })();
+});
+
 // Health Check
 app.get('/api/health', (req, res) => {
   res.json({

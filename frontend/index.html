@@ -86,7 +86,10 @@
                         <h1>📊 Migros B2B Rapor Yönetimi</h1>
                         <p id="welcomeText">Hoş geldiniz</p>
                     </div>
-                    <button id="logoutBtn">🚪 Çıkış Yap</button>
+                    <div style="display:flex;gap:.75rem;align-items:center;">
+                        <button id="agentBtn" class="btn-success" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem;">🔄 Veriyi Güncelle</button>
+                        <button id="logoutBtn" style="width:auto;padding:.6rem 1.2rem;">🚪 Çıkış Yap</button>
+                    </div>
                 </div>
             </div>
 
@@ -174,6 +177,22 @@
             } finally {
                 loginBtn.disabled = false;
                 loginBtn.textContent = '🔐 Giriş Yap';
+            }
+        });
+
+        document.getElementById('agentBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('agentBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Çekiliyor...';
+            try {
+                const res = await fetch('/api/agent-calistir', { method: 'POST' });
+                const data = await res.json();
+                showAlert('success', '✅ Veri çekme başladı! 2-3 dakika bekleyin, sonra raporu yenileyin. Loglar: /api/cekme-loglari');
+                setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Veriyi Güncelle'; }, 10000);
+            } catch(e) {
+                showAlert('error', 'Hata: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = '🔄 Veriyi Güncelle';
             }
         });
 
