@@ -1183,7 +1183,7 @@
             var reader = new FileReader();
             reader.onload = function(ev) {
                 try {
-                    var wb = XLSX.read(ev.target.result, { type: 'binary', cellDates: true });
+                    var wb = XLSX.read(ev.target.result, { type: 'binary', cellDates: false });
                     var ws = wb.Sheets[wb.SheetNames[0]];
                     var raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
@@ -1192,20 +1192,14 @@
                         // Tarih alanı — Excel'de "Gün_" ya da varyantları
                         var tarihRaw = r['Gün_'] || r['Gun_'] || r['Gün'] || r['Tarih'] || r['Date'] || '';
                         var tarih = '';
-                        function localDateStr(dt) {
-                            var y = dt.getFullYear();
-                            var m = String(dt.getMonth() + 1).padStart(2, '0');
-                            var d = String(dt.getDate()).padStart(2, '0');
-                            return y + '-' + m + '-' + d;
-                        }
-                        if (tarihRaw instanceof Date) {
-                            // toISOString() UTC verir, Türkiye'de 1 gün geri kayar
-                            // getFullYear/Month/Date lokal saati kullanır → doğru
-                            tarih = localDateStr(tarihRaw);
-                        } else if (typeof tarihRaw === 'number') {
-                            // Excel serial date (UTC bazlı, lokal metodla al)
-                            var d = new Date((tarihRaw - 25569) * 86400000);
-                            tarih = localDateStr(d);
+                        if (typeof tarihRaw === 'number') {
+                            // cellDates:false → ham Excel serial sayısı
+                            // Math.floor ile tam güne indir, UTC midnight → doğru tarih
+                            var d = new Date(Math.floor(tarihRaw - 25569) * 86400000);
+                            tarih = d.toISOString().split('T')[0];
+                        } else if (tarihRaw instanceof Date) {
+                            // Fallback: Date nesnesi gelirse UTC tarihini al
+                            tarih = tarihRaw.toISOString().split('T')[0];
                         } else {
                             tarih = String(tarihRaw).trim();
                         }
