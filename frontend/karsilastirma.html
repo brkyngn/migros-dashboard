@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KittyCady — Stok Karşılaştırma</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #080a0f;
+    --s1: #0f1117;
+    --s2: #161a24;
+    --s3: #1c2132;
+    --border: #1e2535;
+    --border2: #252d40;
+    --mb: #60a5fa;
+    --mb2: rgba(96,165,250,0.1);
+    --mb3: rgba(96,165,250,0.22);
+    --ac: #34d399;
+    --ac2: rgba(52,211,153,0.1);
+    --ac3: rgba(52,211,153,0.22);
+    --up: #4ade80;
+    --down: #f87171;
+    --warn: #fb923c;
+    --crit: #ef4444;
+    --muted: #3d4a63;
+    --label: #7c8fa8;
+    --text: #d1dce9;
+    --white: #f0f5fb;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Geist', sans-serif;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  body::before {
+    content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    opacity: 0.4;
+  }
+
+  .wrap { position:relative; z-index:1; max-width:1300px; margin:0 auto; padding:36px 20px 60px; }
+
+  /* HEADER */
+  .hdr { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; margin-bottom:32px; padding-bottom:24px; border-bottom:1px solid var(--border); }
+  .hdr-left h1 { font-size:20px; font-weight:700; color:var(--white); letter-spacing:-0.4px; }
+  .hdr-left p { font-family:'Geist Mono',monospace; font-size:11px; color:var(--label); margin-top:3px; }
+  .rpt-badges { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .badge { padding:5px 12px; border-radius:5px; font-family:'Geist Mono',monospace; font-size:11px; font-weight:500; }
+  .b-old { background:rgba(124,143,168,0.08); border:1px solid var(--border2); color:var(--label); }
+  .b-new { background:rgba(96,165,250,0.1); border:1px solid var(--mb3); color:var(--mb); }
+  .arr { color:var(--muted); }
+
+  /* DATE PICKER */
+  .date-bar { display:flex; gap:10px; align-items:center; margin-bottom:24px; flex-wrap:wrap; }
+  .date-bar select, .date-bar button {
+    background:var(--s2); border:1px solid var(--border2); color:var(--text);
+    padding:8px 14px; border-radius:6px; font-family:'Geist Mono',monospace; font-size:12px; cursor:pointer;
+  }
+  .date-bar button { background:var(--mb); color:#fff; border:none; font-weight:600; }
+  .date-bar button:hover { opacity:0.85; }
+  .date-bar label { font-size:11px; color:var(--label); }
+
+  /* SECTION HEAD */
+  .sh { display:flex; align-items:center; gap:8px; margin:36px 0 14px; }
+  .sh-line { width:3px; height:16px; border-radius:2px; flex-shrink:0; }
+  .sh-txt { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:2px; color:var(--label); }
+
+  /* KPI GRID */
+  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(195px,1fr)); gap:8px; margin-bottom:8px; }
+  .kpi {
+    background:var(--s1); border:1px solid var(--border); border-radius:9px; padding:14px 16px;
+    position:relative; overflow:hidden;
+  }
+  .kpi::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; }
+  .kpi.mb::after { background:linear-gradient(90deg,var(--mb),transparent); }
+  .kpi.ac::after { background:linear-gradient(90deg,var(--ac),transparent); }
+  .kpi.mb { border-color:rgba(96,165,250,0.14); }
+  .kpi.ac { border-color:rgba(52,211,153,0.14); }
+  .kpi-lbl { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); margin-bottom:8px; }
+  .kpi-num { font-size:26px; font-weight:700; font-family:'Geist Mono',monospace; letter-spacing:-1px; color:var(--white); line-height:1; }
+  .kpi-num.mb { color:var(--mb); }
+  .kpi-num.ac { color:var(--ac); }
+  .kpi-num.red { color:var(--down); }
+  .kpi-num.ora { color:var(--warn); }
+  .kpi-sub { font-size:11px; color:var(--muted); margin-top:5px; font-family:'Geist Mono',monospace; }
+  .chip { display:inline-block; padding:2px 7px; border-radius:3px; font-size:10px; font-weight:700; font-family:'Geist Mono',monospace; margin-left:4px; vertical-align:middle; }
+  .chip-d { background:rgba(248,113,113,0.12); color:var(--down); }
+  .chip-u { background:rgba(74,222,128,0.12); color:var(--up); }
+
+  /* 2-COL */
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; }
+  @media(max-width:680px){.two{grid-template-columns:1fr;}}
+
+  /* PANEL */
+  .panel { background:var(--s1); border:1px solid var(--border); border-radius:10px; padding:18px; }
+  .panel.mb { border-color:rgba(96,165,250,0.17); }
+  .panel.ac { border-color:rgba(52,211,153,0.17); }
+  .panel-hdr { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+  .pdot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+  .pdot.mb { background:var(--mb); box-shadow:0 0 6px var(--mb); }
+  .pdot.ac { background:var(--ac); box-shadow:0 0 6px var(--ac); }
+  .pname { font-size:12px; font-weight:600; color:var(--white); text-transform:uppercase; letter-spacing:0.5px; }
+  .psub { font-size:10px; color:var(--label); margin-left:auto; font-family:'Geist Mono',monospace; }
+
+  /* MOVE ROWS */
+  .mrow { margin-bottom:9px; }
+  .ml { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; gap:6px; }
+  .mn { font-size:11px; color:var(--label); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:55%; }
+  .mv { display:flex; align-items:center; gap:5px; font-family:'Geist Mono',monospace; font-size:11px; flex-shrink:0; }
+  .mv .v1 { color:var(--muted); }
+  .mv .ar { color:var(--muted); font-size:9px; }
+  .mv .v2 { color:var(--text); font-weight:500; }
+  .mv .df { font-size:10px; font-weight:700; }
+  .df-n { color:var(--down); }
+  .df-p { color:var(--up); }
+  .bar-t { height:3px; background:var(--s3); border-radius:2px; overflow:hidden; }
+  .bar-f { height:100%; border-radius:2px; }
+  .f-dn { background:var(--down); }
+  .f-up { background:var(--up); }
+  .tag { display:inline-block; padding:1px 5px; border-radius:3px; font-size:9px; font-weight:600; font-family:'Geist Mono',monospace; margin-left:4px; }
+  .tag-e { background:rgba(248,113,113,0.12); color:var(--down); }
+  .tag-y { background:rgba(74,222,128,0.12); color:var(--up); }
+  .tag-dm { background:rgba(100,116,139,0.1); color:var(--label); }
+
+  /* TABLE */
+  .tbl-w { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; }
+  th { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); padding:7px 10px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
+  td { padding:7px 10px; border-bottom:1px solid rgba(30,37,53,0.7); font-size:11px; }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:rgba(255,255,255,0.012); }
+  .mono { font-family:'Geist Mono',monospace; }
+  .tc-mb { color:var(--mb); }
+  .tc-ac { color:var(--ac); }
+  .tc-up { color:var(--up); }
+  .tc-dn { color:var(--down); }
+  .tc-wa { color:var(--warn); }
+  .tc-mu { color:var(--muted); }
+
+  /* DM GRID */
+  .dm-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px; }
+  .dm-card { background:var(--s2); border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+  .dm-nm { font-size:11px; font-weight:600; color:var(--label); margin-bottom:8px; }
+  .dm-r { display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; }
+  .dm-k { font-size:10px; color:var(--muted); }
+  .dm-v { font-size:11px; font-family:'Geist Mono',monospace; }
+  .dm-alert { margin-top:8px; padding:4px 8px; border-radius:4px; font-size:10px; font-weight:600; }
+  .dma-c { background:rgba(239,68,68,0.08); color:var(--crit); border:1px solid rgba(239,68,68,0.18); }
+  .dma-w { background:rgba(251,146,60,0.08); color:var(--warn); border:1px solid rgba(251,146,60,0.18); }
+  .dma-ok { background:rgba(74,222,128,0.08); color:var(--up); border:1px solid rgba(74,222,128,0.18); }
+
+  /* ALERT CARDS */
+  .alerts { display:grid; gap:8px; }
+  .al { background:var(--s1); border:1px solid var(--border); border-radius:8px; padding:12px 14px; display:flex; gap:10px; }
+  .al-icon { font-size:16px; flex-shrink:0; }
+  .al-t { font-weight:600; font-size:12px; margin-bottom:2px; }
+  .al-d { font-size:11px; color:var(--label); }
+  .al.red { border-color:rgba(239,68,68,0.22); background:rgba(239,68,68,0.04); }
+  .al.ora { border-color:rgba(251,146,60,0.22); background:rgba(251,146,60,0.04); }
+  .al.grn { border-color:rgba(74,222,128,0.22); background:rgba(74,222,128,0.04); }
+  .al.blu { border-color:rgba(96,165,250,0.22); background:rgba(96,165,250,0.04); }
+
+  hr { border:none; border-top:1px solid var(--border); margin:32px 0; }
+  .footer { margin-top:48px; padding-top:16px; border-top:1px solid var(--border); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+  .ft { font-family:'Geist Mono',monospace; font-size:10px; color:var(--muted); }
+
+  .loading { text-align:center; padding:60px; color:var(--label); }
+  .spinner { display:inline-block; width:28px; height:28px; border:3px solid var(--border); border-top-color:var(--mb); border-radius:50%; animation:spin .8s linear infinite; margin-bottom:12px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HEADER -->
+  <div class="hdr">
+    <div class="hdr-left">
+      <h1>KittyCady · Stok Karsilastirma</h1>
+      <p id="headerSub">Yükleniyor...</p>
+    </div>
+    <div class="rpt-badges">
+      <span class="badge b-old" id="badgeOld">-</span>
+      <span class="arr">&rarr;</span>
+      <span class="badge b-new" id="badgeNew">-</span>
+    </div>
+  </div>
+
+  <!-- TARIH SECIMI -->
+  <div class="date-bar">
+    <label>Eski Tarih:</label>
+    <select id="selTarih1"></select>
+    <label>Yeni Tarih:</label>
+    <select id="selTarih2"></select>
+    <button id="btnCompare">Karsilastir</button>
+  </div>
+
+  <!-- CONTENT -->
+  <div id="content">
+    <div class="loading"><div class="spinner"></div><p>Veriler yükleniyor...</p></div>
+  </div>
+
+</div>
+
+<script>
+const API = '';
+
+// Sayısal parse
+function pf(v) { return parseFloat((v||'0').toString().replace(',','.')) || 0; }
+function fmt(n) { return n.toLocaleString('tr-TR'); }
+function fmtMoney(n) { return n.toLocaleString('tr-TR', {minimumFractionDigits:0, maximumFractionDigits:0}) + ' TL'; }
+
+// Ürün kısa adları
+const URUN_MAP = {
+  'KITTYCADY MARSEILLE BREEZE': { short: 'MB', cls: 'mb' },
+  'KITTYCADY ACTIVE CARBON': { short: 'AC', cls: 'ac' },
+};
+
+function getUrun(name) {
+  const upper = (name||'').toUpperCase();
+  for (const [key, val] of Object.entries(URUN_MAP)) {
+    if (upper.includes(key)) return val;
+  }
+  return { short: upper.slice(0,20), cls: 'mb' };
+}
+
+function isDM(row) {
+  const aciklama = (row.TESLIM_NOKTASI_ACIKLAMA || '').toUpperCase();
+  return aciklama.includes('DAGITIM') || aciklama.includes('DAĞITIM') || row.DEPO_TUR === 'A';
+}
+
+// Tarih listesini yükle
+async function loadDates() {
+  const dates = await fetch(API + '/api/db-stok-gecmis').then(r => r.json());
+  const s1 = document.getElementById('selTarih1');
+  const s2 = document.getElementById('selTarih2');
+  dates.forEach((d,i) => {
+    s1.add(new Option(d, d, i===1, i===1));
+    s2.add(new Option(d, d, i===0, i===0));
+  });
+  return dates;
+}
+
+// Ana karşılaştırma
+async function compare(t1, t2) {
+  document.getElementById('content').innerHTML = '<div class="loading"><div class="spinner"></div><p>Analiz yapılıyor...</p></div>';
+
+  const data = await fetch(`${API}/api/stok-karsilastirma?tarih1=${t1}&tarih2=${t2}`).then(r => r.json());
+  if (data.error) {
+    document.getElementById('content').innerHTML = `<div class="al red"><div class="al-icon">⚠️</div><div><div class="al-t">${data.error}</div></div></div>`;
+    return;
+  }
+
+  document.getElementById('badgeOld').textContent = '📋 ' + data.tarih1 + ' (Eski)';
+  document.getElementById('badgeNew').textContent = '📋 ' + data.tarih2 + ' (Güncel)';
+
+  // Verileri ürün+lokasyon bazında indexle
+  const oldMap = {};  // key: urunAdi|teslimNoktasiId -> row
+  const newMap = {};
+  data.eski.forEach(r => { oldMap[r.URUN_SATICI_ADI + '|' + r.TESLIM_NOKTASI_ID] = r; });
+  data.yeni.forEach(r => { newMap[r.URUN_SATICI_ADI + '|' + r.TESLIM_NOKTASI_ID] = r; });
+
+  const allKeys = new Set([...Object.keys(oldMap), ...Object.keys(newMap)]);
+
+  // Ürün bazında analiz
+  const urunler = {}; // urunAdi -> { locations: [...] }
+
+  allKeys.forEach(key => {
+    const oldR = oldMap[key];
+    const newR = newMap[key];
+    const ref = newR || oldR;
+    const urunAdi = ref.URUN_SATICI_ADI;
+
+    if (!urunler[urunAdi]) urunler[urunAdi] = { locations: [] };
+
+    const eskiStok = pf(oldR?.STOK_MIKTARI);
+    const yeniStok = pf(newR?.STOK_MIKTARI);
+    const fark = yeniStok - eskiStok;
+    const eskiTutar = pf(oldR?.STOK_TUTARI);
+    const yeniTutar = pf(newR?.STOK_TUTARI);
+    const gunlukSatis = pf(newR?.GUNLUK_SATIS_MIKTARI || oldR?.GUNLUK_SATIS_MIKTARI);
+    const gunlukYukleme = pf(newR?.GUNLUK_YUKLEME_MIKTARI || oldR?.GUNLUK_YUKLEME_MIKTARI);
+
+    urunler[urunAdi].locations.push({
+      teslimNoktasi: ref.TESLIM_NOKTASI_ACIKLAMA,
+      teslimNoktasiId: ref.TESLIM_NOKTASI_ID,
+      il: ref.IL_ADI,
+      eskiStok, yeniStok, fark,
+      eskiTutar, yeniTutar,
+      tutarFark: yeniTutar - eskiTutar,
+      gunlukSatis, gunlukYukleme,
+      dm: isDM(ref)
+    });
+  });
+
+  // HTML oluştur
+  let html = '';
+
+  // Her ürün için analiz
+  const urunEntries = Object.entries(urunler);
+  const urunInfos = urunEntries.map(([name, data]) => {
+    const u = getUrun(name);
+    const locs = data.locations;
+    const toplamEski = locs.reduce((s,l) => s + l.eskiStok, 0);
+    const toplamYeni = locs.reduce((s,l) => s + l.yeniStok, 0);
+    const toplamFark = toplamYeni - toplamEski;
+    const toplamEskiTutar = locs.reduce((s,l) => s + l.eskiTutar, 0);
+    const toplamYeniTutar = locs.reduce((s,l) => s + l.yeniTutar, 0);
+    const rafBosEski = locs.filter(l => l.eskiStok === 0 && !l.dm).length;
+    const rafBosYeni = locs.filter(l => l.yeniStok === 0 && !l.dm).length;
+    const dmLocs = locs.filter(l => l.dm);
+    const dmEski = dmLocs.reduce((s,l) => s + l.eskiStok, 0);
+    const dmYeni = dmLocs.reduce((s,l) => s + l.yeniStok, 0);
+    const retailLocs = locs.filter(l => !l.dm);
+    const retailEski = retailLocs.reduce((s,l) => s + l.eskiStok, 0);
+    const retailYeni = retailLocs.reduce((s,l) => s + l.yeniStok, 0);
+    const azalanlar = locs.filter(l => l.fark < 0).sort((a,b) => a.fark - b.fark);
+    const artanlar = locs.filter(l => l.fark > 0).sort((a,b) => b.fark - a.fark);
+    const yeniRafBos = locs.filter(l => l.eskiStok > 0 && l.yeniStok === 0 && !l.dm);
+    const yenilenen = locs.filter(l => l.eskiStok === 0 && l.yeniStok > 0 && !l.dm);
+    const kritikRafBos = locs.filter(l => l.yeniStok === 0 && !l.dm && l.gunlukSatis > 0.3).sort((a,b) => b.gunlukSatis - a.gunlukSatis);
+
+    return { name, u, locs, toplamEski, toplamYeni, toplamFark, toplamEskiTutar, toplamYeniTutar,
+      rafBosEski, rafBosYeni, dmEski, dmYeni, retailEski, retailYeni,
+      azalanlar, artanlar, yeniRafBos, yenilenen, kritikRafBos, dmLocs };
+  });
+
+  const lokasyonSayisi = new Set(urunEntries.flatMap(([_,d]) => d.locations.map(l => l.teslimNoktasiId))).size;
+  document.getElementById('headerSub').textContent =
+    `BT PET URUNLERİ LİMİTED ŞİRKETİ · ${fmt(lokasyonSayisi)} Lokasyon · ${urunInfos.length} SKU · ${data.tarih1} → ${data.tarih2}`;
+
+  // KPI
+  html += '<div class="sh"><div class="sh-line" style="background:var(--label)"></div><div class="sh-txt">Güncel Durum — Karşılaştırma</div></div>';
+  html += '<div class="kpi-grid">';
+  urunInfos.forEach(ui => {
+    const cls = ui.u.cls;
+    const farkChip = ui.toplamFark >= 0
+      ? `<span class="chip chip-u">+${fmt(Math.round(ui.toplamFark))}</span>`
+      : `<span class="chip chip-d">${fmt(Math.round(ui.toplamFark))}</span>`;
+    const rafFark = ui.rafBosYeni - ui.rafBosEski;
+    const rafChip = rafFark > 0
+      ? `<span class="chip chip-d">+${rafFark}</span>`
+      : rafFark < 0
+        ? `<span class="chip chip-u">${rafFark}</span>`
+        : '';
+    const pct = ui.toplamEski > 0 ? ((ui.toplamFark / ui.toplamEski) * 100).toFixed(1) : '0';
+
+    html += `
+      <div class="kpi ${cls}">
+        <div class="kpi-lbl">${ui.u.short} Net Stok</div>
+        <div class="kpi-num ${cls}">${fmt(Math.round(ui.toplamYeni))}${farkChip}</div>
+        <div class="kpi-sub">Eski: ${fmt(Math.round(ui.toplamEski))} · ${pct}%</div>
+      </div>
+      <div class="kpi ${cls}">
+        <div class="kpi-lbl">${ui.u.short} Raf Boş</div>
+        <div class="kpi-num ${ui.rafBosYeni > ui.rafBosEski ? 'ora' : ''}">${ui.rafBosYeni}${rafChip}</div>
+        <div class="kpi-sub">Eski: ${ui.rafBosEski}</div>
+      </div>
+      <div class="kpi ${cls}">
+        <div class="kpi-lbl">${ui.u.short} Stok Tutarı</div>
+        <div class="kpi-num" style="font-size:18px;">${fmtMoney(Math.round(ui.toplamYeniTutar))}</div>
+        <div class="kpi-sub">${ui.toplamYeniTutar - ui.toplamEskiTutar >= 0 ? '+' : ''}${fmtMoney(Math.round(ui.toplamYeniTutar - ui.toplamEskiTutar))}</div>
+      </div>
+      <div class="kpi ${cls}">
+        <div class="kpi-lbl">${ui.u.short} DM Stok</div>
+        <div class="kpi-num ${ui.dmYeni < 50 ? 'red' : ''}">${fmt(Math.round(ui.dmYeni))}</div>
+        <div class="kpi-sub">Eski: ${fmt(Math.round(ui.dmEski))} · Retail: ${fmt(Math.round(ui.retailYeni))}</div>
+      </div>`;
+  });
+  html += '</div>';
+
+  // DM Uyarısı
+  const criticalDMs = urunInfos.flatMap(ui => ui.dmLocs.filter(l => l.yeniStok === 0 && l.eskiStok > 0));
+  if (criticalDMs.length > 0) {
+    html += `<div class="al red" style="margin:20px 0;">
+      <div class="al-icon">📉</div>
+      <div><div class="al-t">${criticalDMs.length} DM Lokasyonu Boşaldı</div>
+      <div class="al-d">${criticalDMs.map(l => l.teslimNoktasi).join(', ')}</div></div></div>`;
+  }
+
+  html += '<hr>';
+
+  // STOK AZALANLAR
+  html += '<div class="sh"><div class="sh-line" style="background:var(--down)"></div><div class="sh-txt">Stok Azalan Lokasyonlar (En Büyükler)</div></div>';
+  html += '<div class="two">';
+  urunInfos.forEach(ui => {
+    const top = ui.azalanlar.slice(0, 10);
+    const maxDrop = top.length > 0 ? Math.abs(top[0].fark) : 1;
+    html += `<div class="panel ${ui.u.cls}">
+      <div class="panel-hdr"><div class="pdot ${ui.u.cls}"></div><div class="pname">${ui.name.split(' ').slice(1).join(' ')}</div><div class="psub">${ui.azalanlar.length} lokasyon azaldı</div></div>`;
+    top.forEach(l => {
+      const dmTag = l.dm ? '<span class="tag tag-dm">DM</span>' : '';
+      const bosTag = l.yeniStok === 0 && !l.dm ? '<span class="tag tag-e">RAF BOŞ</span>' : '';
+      const dmBosTag = l.yeniStok === 0 && l.dm ? '<span class="tag tag-e">DM BOŞ</span>' : '';
+      const pct = maxDrop > 0 ? Math.round(Math.abs(l.fark) / maxDrop * 100) : 0;
+      html += `<div class="mrow">
+        <div class="ml"><span class="mn">${l.teslimNoktasi} ${dmTag}${bosTag}${dmBosTag}</span>
+        <div class="mv"><span class="v1">${Math.round(l.eskiStok)}</span><span class="ar">→</span>
+        <span class="v2 ${l.yeniStok === 0 ? 'tc-dn' : ''}">${Math.round(l.yeniStok)}</span>
+        <span class="df df-n">${Math.round(l.fark)}</span></div></div>
+        <div class="bar-t"><div class="bar-f f-dn" style="width:${pct}%"></div></div></div>`;
+    });
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // STOK ARTANLAR
+  html += '<div class="sh" style="margin-top:28px;"><div class="sh-line" style="background:var(--up)"></div><div class="sh-txt">Stok Artan Lokasyonlar — Yükleme Yapıldı</div></div>';
+  html += '<div class="two">';
+  urunInfos.forEach(ui => {
+    const top = ui.artanlar.slice(0, 10);
+    const maxUp = top.length > 0 ? top[0].fark : 1;
+    html += `<div class="panel ${ui.u.cls}">
+      <div class="panel-hdr"><div class="pdot ${ui.u.cls}"></div><div class="pname">${ui.u.short} · ${ui.artanlar.length} Lokasyona Yükleme</div></div>`;
+    top.forEach(l => {
+      const rafTag = l.eskiStok === 0 && !l.dm ? '<span class="tag tag-y">RAF BOŞTU</span>' : '';
+      const pct = maxUp > 0 ? Math.round(l.fark / maxUp * 100) : 0;
+      html += `<div class="mrow">
+        <div class="ml"><span class="mn">${l.teslimNoktasi} ${rafTag}</span>
+        <div class="mv"><span class="v1">${Math.round(l.eskiStok)}</span><span class="ar">→</span>
+        <span class="v2 tc-up">${Math.round(l.yeniStok)}</span>
+        <span class="df df-p">+${Math.round(l.fark)}</span></div></div>
+        <div class="bar-t"><div class="bar-f f-up" style="width:${pct}%"></div></div></div>`;
+    });
+    html += '</div>';
+  });
+  html += '</div>';
+
+  html += '<hr>';
+
+  // RAF DURUM DEĞİŞİMİ
+  html += '<div class="sh"><div class="sh-line" style="background:var(--mb)"></div><div class="sh-txt">Raf Durumu Değişimleri</div></div>';
+  html += '<div class="two" style="margin-bottom:10px;">';
+
+  // Stoklu -> Raf Boş
+  urunInfos.forEach(ui => {
+    html += `<div class="panel ${ui.u.cls}">
+      <div class="panel-hdr"><div class="pdot ${ui.u.cls}"></div><div class="pname">${ui.u.short} · Stoklu → Raf Boş (${ui.yeniRafBos.length} mağaza)</div></div>
+      <div class="tbl-w"><table>
+        <thead><tr><th>Mağaza</th><th>Dün</th><th>Bugün</th><th>Günlük Satış</th></tr></thead><tbody>`;
+    ui.yeniRafBos.sort((a,b) => b.eskiStok - a.eskiStok).forEach(l => {
+      html += `<tr><td>${l.teslimNoktasi}</td><td class="mono">${Math.round(l.eskiStok)}</td><td class="mono tc-dn">0</td>
+        <td class="mono ${l.gunlukSatis > 0.5 ? 'tc-wa' : ''}">${l.gunlukSatis > 0 ? l.gunlukSatis.toFixed(3) : '—'}</td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+  });
+  html += '</div>';
+
+  // Raf Boş -> Stok Geldi
+  html += '<div class="two">';
+  urunInfos.forEach(ui => {
+    html += `<div class="panel ${ui.u.cls}">
+      <div class="panel-hdr"><div class="pdot ${ui.u.cls}"></div><div class="pname">${ui.u.short} · Raf Boş → Stok Geldi ✅ (${ui.yenilenen.length} mağaza)</div></div>
+      <div class="tbl-w"><table>
+        <thead><tr><th>Mağaza</th><th>Bugün</th><th>Günlük Satış</th></tr></thead><tbody>`;
+    ui.yenilenen.sort((a,b) => b.gunlukSatis - a.gunlukSatis).forEach(l => {
+      html += `<tr><td>${l.teslimNoktasi}</td><td class="mono tc-up">${Math.round(l.yeniStok)}</td>
+        <td class="mono ${l.gunlukSatis > 0.5 ? 'tc-wa' : ''}">${l.gunlukSatis > 0 ? l.gunlukSatis.toFixed(3) : '—'}</td></tr>`;
+    });
+    html += '</tbody></table></div></div>';
+  });
+  html += '</div>';
+
+  html += '<hr>';
+
+  // DM ANALİZİ
+  html += '<div class="sh"><div class="sh-line" style="background:var(--warn)"></div><div class="sh-txt">Dağıtım Merkezleri — Güncel Durum</div></div>';
+  html += '<div class="dm-grid" style="margin-bottom:24px;">';
+
+  // DM'leri teslim noktası bazında grupla
+  const dmMap = {};
+  urunInfos.forEach(ui => {
+    ui.dmLocs.forEach(l => {
+      if (!dmMap[l.teslimNoktasi]) dmMap[l.teslimNoktasi] = {};
+      dmMap[l.teslimNoktasi][ui.u.short] = l;
+    });
+  });
+
+  Object.entries(dmMap).sort((a,b) => {
+    // Kritik olanları üste al
+    const aMin = Math.min(...Object.values(a[1]).map(l => l.yeniStok));
+    const bMin = Math.min(...Object.values(b[1]).map(l => l.yeniStok));
+    return aMin - bMin;
+  }).forEach(([dmName, products]) => {
+    const anyEmpty = Object.values(products).some(l => l.yeniStok === 0);
+    const anyLow = Object.values(products).some(l => l.yeniStok > 0 && l.yeniStok < 30);
+
+    html += `<div class="dm-card"><div class="dm-nm">📦 ${dmName}</div>`;
+    Object.entries(products).forEach(([short, l]) => {
+      const fark = l.fark;
+      let valCls = '';
+      let label = `${Math.round(l.yeniStok)} ad`;
+      if (l.yeniStok === 0 && l.eskiStok > 0) { valCls = 'tc-dn'; label += ` (−${Math.round(Math.abs(fark))}) BOŞALDI`; }
+      else if (l.yeniStok === 0) { valCls = 'tc-mu'; label += ' (zaten boştu)'; }
+      else if (l.yeniStok < 30) { valCls = 'tc-wa'; label += ` (${fark >= 0 ? '+' : ''}${Math.round(fark)}) kritik`; }
+      else { label += ` (${fark >= 0 ? '+' : ''}${Math.round(fark)})`; }
+
+      html += `<div class="dm-r"><div class="dm-k">${short} Stok</div><div class="dm-v ${valCls}">${label}</div></div>`;
+      html += `<div class="dm-r"><div class="dm-k">${short} Yükleme/gün</div><div class="dm-v">${l.gunlukYukleme.toFixed(1)} ad</div></div>`;
+    });
+
+    const allEmpty = Object.values(products).every(l => l.yeniStok === 0);
+    if (allEmpty) html += '<div class="dm-alert dma-c">🚨 TÜM ÜRÜNLER BOŞ</div>';
+    else if (anyEmpty) html += '<div class="dm-alert dma-c">🚨 BİR VEYA DAHA FAZLA ÜRÜN BOŞ</div>';
+    else if (anyLow) html += '<div class="dm-alert dma-w">⚠️ Stok kritik seviyede</div>';
+    else html += '<div class="dm-alert dma-ok">✅ Stok yeterli</div>';
+
+    html += '</div>';
+  });
+  html += '</div>';
+
+  html += '<hr>';
+
+  // KRİTİK RAF BOŞ
+  html += '<div class="sh"><div class="sh-line" style="background:var(--crit)"></div><div class="sh-txt">Güncel Kritik: Raf Boş + Yüksek Satış Hızı</div></div>';
+  html += '<div class="two">';
+  urunInfos.forEach(ui => {
+    html += `<div class="panel ${ui.u.cls}">
+      <div class="panel-hdr"><div class="pdot ${ui.u.cls}"></div><div class="pname">${ui.u.short} · Raf Boş & Satış > 0,3</div></div>
+      <div class="tbl-w"><table>
+        <thead><tr><th>Mağaza</th><th>Günlük Satış</th><th>Günlük Kaybedilen</th></tr></thead><tbody>`;
+    ui.kritikRafBos.slice(0,15).forEach(l => {
+      // Yaklaşık birim fiyat = toplamYeniTutar / toplamYeni
+      const birimFiyat = ui.toplamYeni > 0 ? ui.toplamYeniTutar / ui.toplamYeni : 215;
+      const kayip = l.gunlukSatis * birimFiyat;
+      html += `<tr><td>${l.teslimNoktasi}</td><td class="mono ${l.gunlukSatis > 0.5 ? 'tc-wa' : ''}">${l.gunlukSatis.toFixed(3)}</td>
+        <td class="mono tc-dn">${fmtMoney(Math.round(kayip))}</td></tr>`;
+    });
+    if (ui.kritikRafBos.length === 0) html += '<tr><td colspan="3" class="tc-mu">Kritik mağaza yok ✅</td></tr>';
+    html += '</tbody></table></div></div>';
+  });
+  html += '</div>';
+
+  // FOOTER
+  html += `<div class="footer">
+    <div class="ft">KittyCady · ${data.tarih1} → ${data.tarih2} Delta Analizi</div>
+    <div class="ft">${fmt(lokasyonSayisi)} lokasyon · ${urunInfos.map(u => u.u.short).join(' + ')} · BT PET URUNLERİ LİMİTED ŞİRKETİ</div>
+  </div>`;
+
+  document.getElementById('content').innerHTML = html;
+}
+
+// Init
+(async () => {
+  const dates = await loadDates();
+  if (dates.length >= 2) {
+    compare(dates[1], dates[0]);
+  } else if (dates.length === 1) {
+    document.getElementById('content').innerHTML = '<div class="al ora"><div class="al-icon">⚠️</div><div><div class="al-t">Karşılaştırma için en az 2 gün veri gerekli</div><div class="al-d">Şu an sadece ' + dates[0] + ' tarihli veri mevcut.</div></div></div>';
+  } else {
+    document.getElementById('content').innerHTML = '<div class="al red"><div class="al-icon">⚠️</div><div><div class="al-t">Henüz stok verisi yok</div></div></div>';
+  }
+
+  document.getElementById('btnCompare').addEventListener('click', () => {
+    const t1 = document.getElementById('selTarih1').value;
+    const t2 = document.getElementById('selTarih2').value;
+    if (t1 && t2 && t1 !== t2) compare(t1, t2);
+  });
+})();
+</script>
+</body>
+</html>

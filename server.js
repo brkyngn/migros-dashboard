@@ -16,6 +16,7 @@ app.use(express.static(clientDist));
 
 // Eski HTML araçlar sayfası
 app.get('/tools', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'tools.html')));
+app.get('/karsilastirma', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'karsilastirma.html')));
 app.use('/frontend', express.static(path.join(__dirname, 'frontend')));
 
 const CONFIG = {
@@ -245,6 +246,26 @@ app.get('/api/db-ozet', async (req, res) => {
       satis: satis.rows[0],
       basariliCekme: parseInt(cekme.rows[0].cnt) || 0
     });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Stok karşılaştırma — iki tarih arasındaki farklar
+app.get('/api/stok-karsilastirma', async (req, res) => {
+  try {
+    const { tarih1, tarih2 } = req.query;
+    // Tarih verilmezse son 2 tarihi al
+    let t1 = tarih1, t2 = tarih2;
+    if (!t1 || !t2) {
+      const dates = await pool.query(`SELECT DISTINCT veri_tarihi FROM stok WHERE veri_tarihi IS NOT NULL ORDER BY veri_tarihi DESC LIMIT 2`);
+      if (dates.rows.length < 2) return res.json({ error: 'Karşılaştırma için en az 2 gün veri gerekli', dates: dates.rows.map(r => r.veri_tarihi) });
+      t2 = dates.rows[0].veri_tarihi; // yeni
+      t1 = dates.rows[1].veri_tarihi; // eski
+    }
+    const [r1, r2] = await Promise.all([
+      pool.query('SELECT * FROM stok WHERE veri_tarihi = $1', [t1]),
+      pool.query('SELECT * FROM stok WHERE veri_tarihi = $1', [t2])
+    ]);
+    res.json({ tarih1: t1, tarih2: t2, eski: r1.rows, yeni: r2.rows });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
