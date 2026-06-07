@@ -289,6 +289,21 @@ app.post('/api/kaydet-stok', async (req, res) => {
 });
 
 // Excel'den geçmiş satış içe aktarma
+// Tarih string'ini YYYY-MM-DD formatına normalize et
+function normalizeDateStr(val) {
+  if (!val) return val;
+  const s = String(val).trim();
+  // Zaten YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // MM/DD/YYYY veya MM/DD/YYYY HH:MM:SS
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (mdy) return `${mdy[3]}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}`;
+  // DD.MM.YYYY
+  const dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+  return s.slice(0, 10);
+}
+
 app.post('/api/import-excel-satis', async (req, res) => {
   const data = req.body.data;
   if (!data || !data.length) return res.json({ inserted: 0 });
@@ -301,6 +316,8 @@ app.post('/api/import-excel-satis', async (req, res) => {
 
     let inserted = 0;
     for (const row of data) {
+      // DateTransaction formatını normalize et
+      if (row.DateTransaction) row.DateTransaction = normalizeDateStr(row.DateTransaction);
       const cols = Object.keys(row).map(k => '"' + k + '"').join(',');
       const vals = Object.keys(row).map((_, i) => '$' + (i + 1)).join(',');
       const values = Object.values(row).map(v => v === '' ? null : v);
@@ -322,16 +339,11 @@ app.post('/api/kaydet-gunluk', async (req, res) => {
   if (!data || !data.length) return res.json({ success: false, message: 'Veri yok' });
   try {
     if (data[0] && data[0].SalesList) data = data.flatMap(i => i.SalesList || []);
-    // DateTransaction formatını normalize et: MM/DD/YYYY HH:MM:SS → YYYY-MM-DD
-    data = data.map(row => {
-      if (row.DateTransaction && row.DateTransaction.includes('/')) {
-        const parts = row.DateTransaction.split(' ')[0].split('/');
-        if (parts.length === 3) {
-          row = { ...row, DateTransaction: `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}` };
-        }
-      }
-      return row;
-    });
+    // DateTransaction formatını normalize et
+    data = data.map(row => row.DateTransaction
+      ? { ...row, DateTransaction: normalizeDateStr(row.DateTransaction) }
+      : row
+    );
     const count = await saveToDatabase('gunluk_satis', data);
     res.json({ success: true, message: count + ' kayıt eklendi' });
   } catch(e) { res.status(500).json({ success: false, message: e.message }); }
