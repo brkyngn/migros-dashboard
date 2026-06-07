@@ -158,7 +158,14 @@
             if (!token || !username || (Date.now() - tokenTimestamp) < TOKEN_MAX_AGE) return true;
             console.log('🔄 Token expire oldu, yeniden login...');
             const password = sessionStorage.getItem('mgr_pass');
-            if (!password) { showAlert('error', 'Oturum süresi doldu, tekrar giriş yapın.'); return false; }
+            if (!password) {
+                // Şifre kayıtlı değil, login ekranına dön
+                sessionStorage.clear();
+                document.getElementById('dashboardScreen').classList.remove('active');
+                document.getElementById('loginScreen').style.display = '';
+                showAlert('error', 'Oturum süresi doldu, tekrar giriş yapın.');
+                return false;
+            }
             try {
                 const response = await fetch(`${PROXY_URL}/auth/login`, {
                     method: 'POST',
