@@ -455,6 +455,13 @@ app.delete('/api/temizle-bozuk-tarih', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.delete('/api/gunluk-satis-temizle', async (req, res) => {
+  try {
+    await pool.query('TRUNCATE TABLE gunluk_satis RESTART IDENTITY');
+    res.json({ success: true, message: 'gunluk_satis tablosu temizlendi' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/fix-date-format', async (req, res) => {
   try {
     const r = await pool.query(`
