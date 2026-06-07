@@ -2,6 +2,18 @@ const https = require('https');
 const { Pool } = require('pg');
 require('dotenv').config();
 
+// Türkiye saatine göre tarih hesapla (UTC+3)
+function trToday() {
+  const now = new Date();
+  const tr = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  return tr.toISOString().split('T')[0];
+}
+function trYesterday() {
+  const now = new Date();
+  const tr = new Date(now.getTime() + 3 * 60 * 60 * 1000 - 86400000);
+  return tr.toISOString().split('T')[0];
+}
+
 const CONFIG = {
   USERNAME:  process.env.MIGROS_USERNAME,
   PASSWORD:  process.env.MIGROS_PASSWORD,
@@ -145,7 +157,7 @@ async function logToDb(raporAdi, durum, satirSayisi, mesaj) {
 
 // Günlük Satış çek
 async function fetchGunlukSatis() {
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  const yesterday = trYesterday();
   const r = await fetchData(
     `/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticild=${CONFIG.SATICI_ID}`,
     'Günlük Satış'
@@ -164,7 +176,7 @@ async function fetchStok() {
   );
   if (!r || !r.data) return 0;
   // Verinin temsil ettiği tarih = dün
-  const veriTarihi = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  const veriTarihi = trYesterday();
   const stamped = r.data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
   return saveToDatabase('stok', stamped);
 }

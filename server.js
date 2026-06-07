@@ -28,6 +28,12 @@ const CONFIG = {
   NODE_ENV:   process.env.NODE_ENV || 'development'
 };
 
+// Türkiye saatine göre tarih (UTC+3)
+function trYesterday() {
+  const now = new Date();
+  return new Date(now.getTime() + 3 * 60 * 60 * 1000 - 86400000).toISOString().split('T')[0];
+}
+
 // PostgreSQL bağlantısı
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -275,7 +281,7 @@ app.post('/api/kaydet-stok', async (req, res) => {
   const data = req.body.data;
   if (!data || !data.length) return res.json({ success: false, message: 'Veri yok' });
   try {
-    const veriTarihi = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    const veriTarihi = trYesterday();
     const stamped = data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
     const count = await saveToDatabase('stok', stamped);
     res.json({ success: true, message: count + ' kayıt eklendi (' + veriTarihi + ')' });
@@ -379,7 +385,7 @@ app.post('/api/agent-stok', async (req, res) => {
     const r = await agentFetch(`/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`, 'Stok');
     let count = 0;
     if (r && r.data) {
-      const veriTarihi = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+      const veriTarihi = trYesterday();
       const stamped = r.data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
       count = await saveToDatabase('stok', stamped);
     }
@@ -392,7 +398,7 @@ app.post('/api/agent-gunluk', async (req, res) => {
   console.log('🔧 Manuel Günlük Satış çekme tetiklendi');
   res.json({ status: 'started', message: 'Günlük Satış çekme başladı.' });
   (async () => {
-    const yesterday = new Date(Date.now()-86400000).toISOString().split('T')[0];
+    const yesterday = trYesterday();
     const r = await agentFetch(`/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticild=${CONFIG.SATICI_ID}`, 'Günlük Satış');
     let count = 0;
     if (r && r.data) {
@@ -412,7 +418,7 @@ app.post('/api/agent-calistir', async (req, res) => {
     let sc = 0;
     if (sr && sr.data) sc = await saveToDatabase('stok', sr.data);
 
-    const yesterday = new Date(Date.now()-86400000).toISOString().split('T')[0];
+    const yesterday = trYesterday();
     const gr = await agentFetch(`/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticild=${CONFIG.SATICI_ID}`, 'Günlük Satış');
     let gc = 0;
     if (gr && gr.data) {

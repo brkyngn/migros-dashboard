@@ -8,6 +8,11 @@ const NAV = [
   { id: 'reports' as Page,        icon: '📄', label: 'Raporlar' },
 ];
 
+const EXT_LINKS = [
+  { href: '/karsilastirma', icon: '📊', label: 'Stok Karşılaştırma' },
+  { href: '/tools',         icon: '🛠️', label: 'Araçlar' },
+];
+
 interface Props { current: Page; onChange: (p: Page) => void; }
 
 export default function Sidebar({ current, onChange }: Props) {
@@ -32,6 +37,19 @@ export default function Sidebar({ current, onChange }: Props) {
           </button>
         ))}
       </nav>
+      <div className="px-3 py-2 border-t border-white/10">
+        <div className="text-white/30 text-[10px] uppercase tracking-wider px-3 py-2">Harici Sayfalar</div>
+        {EXT_LINKS.map(link => (
+          <a
+            key={link.href}
+            href={link.href}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-white/50 hover:text-white/80 hover:bg-white/8 no-underline"
+          >
+            <span>{link.icon}</span>
+            <span>{link.label}</span>
+          </a>
+        ))}
+      </div>
       <div className="px-6 py-4 border-t border-white/10">
         <div className="text-white/30 text-xs">BT Pet Ürünleri Ltd. Şti.</div>
       </div>
