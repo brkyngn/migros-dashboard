@@ -35,6 +35,8 @@ const pool = new Pool({
 
 let token = '';
 let connectionCodeRaw = '';
+let tokenTimestamp = 0;
+const TOKEN_MAX_AGE = 4 * 60 * 1000; // 4 dakika
 
 // Tabloları oluştur
 async function initializeDatabase() {
@@ -99,7 +101,7 @@ async function loginMigros() {
       res.on('end', () => {
         try {
           const r = JSON.parse(d);
-          if (r.token) { token = r.token; connectionCodeRaw = r.connectionCode || ''; console.log('✅ Migros Login başarılı'); resolve(true); }
+          if (r.token) { token = r.token; connectionCodeRaw = r.connectionCode || ''; tokenTimestamp = Date.now(); console.log('✅ Migros Login başarılı'); resolve(true); }
           else { console.error('❌ Login başarısız:', r.message); resolve(false); }
         } catch(e) { resolve(false); }
       });

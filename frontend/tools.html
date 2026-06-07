@@ -150,6 +150,39 @@
         let currentData = null;
         let username = sessionStorage.getItem('mgr_user') || '';
         let activeTab = 'isleticiSatis';
+        let tokenTimestamp = parseInt(sessionStorage.getItem('mgr_token_ts') || '0');
+        const TOKEN_MAX_AGE = 4 * 60 * 1000; // 4 dakika
+
+        // Token expire olduysa otomatik yenile
+        async function ensureFreshToken() {
+            if (!token || !username || (Date.now() - tokenTimestamp) < TOKEN_MAX_AGE) return true;
+            console.log('🔄 Token expire oldu, yeniden login...');
+            const password = sessionStorage.getItem('mgr_pass');
+            if (!password) { showAlert('error', 'Oturum süresi doldu, tekrar giriş yapın.'); return false; }
+            try {
+                const response = await fetch(`${PROXY_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await response.json();
+                if (data.token) {
+                    token = data.token;
+                    connectionCodeRaw = data.connectionCode || '';
+                    tokenTimestamp = Date.now();
+                    sessionStorage.setItem('mgr_token', token);
+                    sessionStorage.setItem('mgr_cc', connectionCodeRaw);
+                    sessionStorage.setItem('mgr_token_ts', tokenTimestamp.toString());
+                    console.log('✅ Token yenilendi');
+                    return true;
+                }
+                showAlert('error', 'Token yenilenemedi, tekrar giriş yapın.');
+                return false;
+            } catch(e) {
+                showAlert('error', 'Token yenileme hatası: ' + e.message);
+                return false;
+            }
+        }
 
         // Oturum varsa direkt dashboard'u göster
         if (token && username) {
@@ -193,9 +226,12 @@
                 if (data.token) {
                     token = data.token;
                     connectionCodeRaw = data.connectionCode || '';
+                    tokenTimestamp = Date.now();
                     sessionStorage.setItem('mgr_token', token);
                     sessionStorage.setItem('mgr_cc', connectionCodeRaw);
                     sessionStorage.setItem('mgr_user', username);
+                    sessionStorage.setItem('mgr_pass', password);
+                    sessionStorage.setItem('mgr_token_ts', tokenTimestamp.toString());
                     document.getElementById('loginScreen').style.display = 'none';
                     document.getElementById('dashboardScreen').classList.add('active');
                     document.getElementById('welcomeText').textContent = `Hoş geldiniz, ${username}`;
@@ -398,6 +434,7 @@
             document.getElementById('exportBtn').style.display = 'none';
 
             try {
+                if (!(await ensureFreshToken())) { btn.disabled = false; btn.textContent = '🔍 Raporu Getir'; return; }
                 const hashedConnectionCode = await sha1(connectionCodeRaw + username);
                 let endpoint = '';
                 
