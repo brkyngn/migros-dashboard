@@ -1248,15 +1248,19 @@
                 var chunk = excelRows.slice(i * chunkSize, (i + 1) * chunkSize);
                 status.textContent = '⏳ Kaydediliyor... (' + ((i+1)) + '/' + chunks + ')';
                 try {
-                    var res = await fetch('/api/import-excel-satis', {
+                    var fetchRes = await fetch('/api/import-excel-satis', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ data: chunk })
                     });
-                    var result = await res.json();
+                    var text = await fetchRes.text();
+                    var result;
+                    try { result = JSON.parse(text); }
+                    catch(pe) { throw new Error('Sunucu hatası (chunk ' + (i+1) + '): ' + text.slice(0, 200)); }
+                    if (!fetchRes.ok) throw new Error(result.message || result.error || 'Sunucu hatası ' + fetchRes.status);
                     totalSaved += result.inserted || 0;
                 } catch(e) {
-                    status.textContent = '❌ Hata: ' + e.message;
+                    status.textContent = '❌ Hata chunk ' + (i+1) + ': ' + e.message;
                     btn.disabled = false;
                     return;
                 }

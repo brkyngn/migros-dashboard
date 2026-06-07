@@ -315,22 +315,30 @@ app.post('/api/import-excel-satis', async (req, res) => {
     await ensureColumns('gunluk_satis', keyCols);
 
     let inserted = 0;
+    let skipped = 0;
     for (const row of data) {
-      // DateTransaction formatını normalize et
-      if (row.DateTransaction) row.DateTransaction = normalizeDateStr(row.DateTransaction);
-      const cols = Object.keys(row).map(k => '"' + k + '"').join(',');
-      const vals = Object.keys(row).map((_, i) => '$' + (i + 1)).join(',');
-      const values = Object.values(row).map(v => v === '' ? null : v);
       try {
+        // DateTransaction formatını normalize et
+        if (row.DateTransaction) row.DateTransaction = normalizeDateStr(row.DateTransaction);
+        // Sadece string/number değerleri al, diğerlerini null yap
+        const safeRow = {};
+        for (const [k, v] of Object.entries(row)) {
+          safeRow[k] = (v === '' || v === undefined || v === null) ? null
+            : (typeof v === 'object') ? String(v) : v;
+        }
+        const cols = Object.keys(safeRow).map(k => '"' + k + '"').join(',');
+        const vals = Object.keys(safeRow).map((_, i) => '$' + (i + 1)).join(',');
+        const values = Object.values(safeRow);
         const r = await pool.query(
           `INSERT INTO gunluk_satis (${cols}) VALUES (${vals})`, values
         );
         inserted += r.rowCount;
-      } catch(e) { /* satır zaten var veya format hatası, atla */ }
+      } catch(e) { skipped++; }
     }
-    res.json({ success: true, inserted });
+    res.json({ success: true, inserted, skipped });
   } catch(e) {
-    res.status(500).json({ success: false, message: e.message });
+    console.error('import-excel-satis hata:', e.message);
+    res.status(500).json({ success: false, message: e.message, inserted: 0 });
   }
 });
 
