@@ -58,7 +58,9 @@ export default function SalesPerformance() {
     { label: '21–31', from: 21, to: 31 },
   ].map(p => {
     const filtered = sales.filter(s => {
-      const day = new Date(s.DateTransaction).getDate();
+      const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
+      raw.setUTCDate(raw.getUTCDate() + 1);
+      const day = raw.getUTCDate();
       return day >= p.from && day <= p.to;
     });
     return { ...p, qty: filtered.reduce((s, r) => s + (parseFloat(r.QuantitySold) || 0), 0), rev: filtered.reduce((s, r) => s + (parseFloat(r.NetSalesValue) || 0), 0) };
@@ -93,6 +95,7 @@ export default function SalesPerformance() {
             <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} />
             <Tooltip formatter={(v: unknown) => formatNum(Number(v))} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Line dataKey="toplam" name="Toplam" stroke="#16a34a" strokeWidth={2.5} dot={false} strokeDasharray="6 3" />
             <Line dataKey={SKU_AC} name="Active Carbon" stroke="#C0392B" strokeWidth={2} dot={false} />
             <Line dataKey={SKU_MB} name="Marseille Breeze" stroke="#1A3A5C" strokeWidth={2} dot={false} />
           </LineChart>

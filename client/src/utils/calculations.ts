@@ -50,8 +50,9 @@ export const groupByProduct = (sales: DailySale[]): ProductSummary[] => {
 export const groupByWeek = (sales: DailySale[]) => {
   const map: Record<string, Record<string, number>> = {};
   sales.forEach(s => {
-    const d = new Date(s.DateTransaction);
-    const week = `Hf ${getWeekNum(d)}`;
+    const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
+    raw.setUTCDate(raw.getUTCDate() + 1);
+    const week = `Hf ${getWeekNum(raw)}`;
     if (!map[week]) map[week] = {};
     const sku = s.SupplierItemNumber;
     map[week][sku] = (map[week][sku] || 0) + (parseFloat(s.QuantitySold) || 0);
@@ -69,7 +70,9 @@ export const groupByDayOfWeek = (sales: DailySale[]) => {
   const map: Record<string, Record<string, number>> = {};
   days.forEach(d => { map[d] = {}; });
   sales.forEach(s => {
-    const day = days[(new Date(s.DateTransaction).getDay() + 6) % 7];
+    const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
+    raw.setUTCDate(raw.getUTCDate() + 1);
+    const day = days[(raw.getUTCDay() + 6) % 7];
     const sku = s.SupplierItemNumber;
     map[day][sku] = (map[day][sku] || 0) + (parseFloat(s.QuantitySold) || 0);
   });
@@ -79,11 +82,17 @@ export const groupByDayOfWeek = (sales: DailySale[]) => {
 export const groupByDay = (sales: DailySale[]) => {
   const map: Record<string, Record<string, number>> = {};
   sales.forEach(s => {
-    const date = s.DateTransaction.slice(0, 10);
+    // Migros API tarihi UTC bazlı, Türkiye saatine göre +1 gün eklenmeli
+    const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
+    raw.setUTCDate(raw.getUTCDate() + 1);
+    const date = raw.toISOString().slice(0, 10);
     if (!map[date]) map[date] = {};
     const sku = s.SupplierItemNumber;
     map[date][sku] = (map[date][sku] || 0) + (parseFloat(s.QuantitySold) || 0);
   });
   return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, data]) => ({ date: date.slice(5), ...data }));
+    .map(([date, data]) => {
+      const total = (data[SKU_AC] || 0) + (data[SKU_MB] || 0);
+      return { date: date.slice(5), ...data, toplam: total };
+    });
 };
