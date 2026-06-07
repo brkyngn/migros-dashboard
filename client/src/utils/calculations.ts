@@ -50,7 +50,7 @@ export const groupByProduct = (sales: DailySale[]): ProductSummary[] => {
 export const groupByWeek = (sales: DailySale[]) => {
   const map: Record<string, Record<string, number>> = {};
   sales.forEach(s => {
-    const d = new Date(shiftDateStr(s.DateTransaction) + 'T00:00:00Z');
+    const d = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
     if (isNaN(d.getTime())) return;
     const week = `Hf ${getWeekNum(d)}`;
     if (!map[week]) map[week] = {};
@@ -70,7 +70,7 @@ export const groupByDayOfWeek = (sales: DailySale[]) => {
   const map: Record<string, Record<string, number>> = {};
   days.forEach(d => { map[d] = {}; });
   sales.forEach(s => {
-    const d2 = new Date(shiftDateStr(s.DateTransaction) + 'T00:00:00Z');
+    const d2 = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
     if (isNaN(d2.getTime())) return;
     const day = days[(d2.getUTCDay() + 6) % 7];
     const sku = s.SupplierItemNumber;
@@ -79,20 +79,11 @@ export const groupByDayOfWeek = (sales: DailySale[]) => {
   return days.map(d => ({ day: d, ...map[d] }));
 };
 
-// DateTransaction +1 gün (UTC→TR offset)
-function shiftDateStr(dt: string): string {
-  try {
-    const raw = new Date(dt.slice(0, 10) + 'T00:00:00Z');
-    if (isNaN(raw.getTime())) return dt.slice(0, 10);
-    raw.setUTCDate(raw.getUTCDate() + 1);
-    return raw.toISOString().slice(0, 10);
-  } catch { return dt.slice(0, 10); }
-}
-
 export const groupByDay = (sales: DailySale[]) => {
   const map: Record<string, Record<string, number>> = {};
   sales.forEach(s => {
-    const date = shiftDateStr(s.DateTransaction);
+    const date = s.DateTransaction.slice(0, 10);
+    if (!date || date.length < 10) return;
     if (!map[date]) map[date] = {};
     const sku = s.SupplierItemNumber;
     map[date][sku] = (map[date][sku] || 0) + (parseFloat(s.QuantitySold) || 0);

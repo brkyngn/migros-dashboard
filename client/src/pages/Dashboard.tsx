@@ -26,14 +26,7 @@ export default function Dashboard({ onNavigate }: Props) {
   const totalRevenue = products.reduce((s, p) => s + p.revenue, 0);
   const totalQty = products.reduce((s, p) => s + p.quantity, 0);
   const allStores = new Set(sales.map(s => s.StoreNumber)).size;
-  const days = new Set(sales.map(s => {
-    try {
-      const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
-      if (isNaN(raw.getTime())) return s.DateTransaction.slice(0, 10);
-      raw.setUTCDate(raw.getUTCDate() + 1);
-      return raw.toISOString().slice(0, 10);
-    } catch { return s.DateTransaction.slice(0, 10); }
-  })).size;
+  const days = new Set(sales.map(s => s.DateTransaction.slice(0, 10))).size;
   const avgDailyRevenue = days > 0 ? totalRevenue / days : 0;
 
   const stockStatus = { zero: 0, critical: 0, warning: 0, healthy: 0 };
