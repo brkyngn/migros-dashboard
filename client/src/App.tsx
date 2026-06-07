@@ -6,6 +6,7 @@ import SalesPerformance from './pages/SalesPerformance';
 import StockAlerts from './pages/StockAlerts';
 import TurnoverAnalysis from './pages/TurnoverAnalysis';
 import Reports from './pages/Reports';
+import DailyReport from './pages/DailyReport';
 import type { Page } from './types';
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
         <Header page={page} lastUpdate={new Date().toLocaleString('tr-TR')} />
         <main className="flex-1 overflow-auto bg-sand">
           {page === 'dashboard'     && <Dashboard onNavigate={navigate} />}
+          {page === 'daily-report'  && <DailyReport />}
           {page === 'sales'         && <SalesPerformance />}
           {page === 'stock-alerts'  && <StockAlerts initialFilter={stockFilter} />}
           {page === 'turnover'      && <TurnoverAnalysis />}

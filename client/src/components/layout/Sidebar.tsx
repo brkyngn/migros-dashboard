@@ -2,6 +2,7 @@ import type { Page } from '../../types';
 
 const NAV = [
   { id: 'dashboard' as Page,      icon: '🏠', label: 'Yönetim Özeti' },
+  { id: 'daily-report' as Page,   icon: '📅', label: 'Günlük Satış' },
   { id: 'sales' as Page,          icon: '📈', label: 'Satış Performansı' },
   { id: 'stock-alerts' as Page,   icon: '⚠️', label: 'Stok Uyarıları' },
   { id: 'turnover' as Page,       icon: '🔄', label: 'Devir Hızı' },

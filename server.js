@@ -248,6 +248,13 @@ app.get('/api/db-gunluk', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/db-satis-tarihler', async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT DISTINCT "DateTransaction"::text as tarih FROM gunluk_satis WHERE "DateTransaction" IS NOT NULL ORDER BY tarih DESC`);
+    res.json(r.rows.map(row => row.tarih.slice(0, 10)));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/db-ozet', async (req, res) => {
   try {
     const stok    = await pool.query('SELECT COUNT(*) as cnt, MAX(createdat) as son FROM stok');

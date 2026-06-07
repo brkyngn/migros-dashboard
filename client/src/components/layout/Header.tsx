@@ -1,5 +1,6 @@
 const TITLES: Record<string, string> = {
   dashboard: 'Yönetim Özeti',
+  'daily-report': 'Günlük Satış Raporu',
   sales: 'Ürün Satış Performansı',
   'stock-alerts': 'Stok Uyarıları',
   turnover: 'Stok Devir Hızı & Verimlilik',
