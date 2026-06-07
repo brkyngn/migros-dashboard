@@ -322,6 +322,16 @@ app.post('/api/kaydet-gunluk', async (req, res) => {
   if (!data || !data.length) return res.json({ success: false, message: 'Veri yok' });
   try {
     if (data[0] && data[0].SalesList) data = data.flatMap(i => i.SalesList || []);
+    // DateTransaction formatını normalize et: MM/DD/YYYY HH:MM:SS → YYYY-MM-DD
+    data = data.map(row => {
+      if (row.DateTransaction && row.DateTransaction.includes('/')) {
+        const parts = row.DateTransaction.split(' ')[0].split('/');
+        if (parts.length === 3) {
+          row = { ...row, DateTransaction: `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}` };
+        }
+      }
+      return row;
+    });
     const count = await saveToDatabase('gunluk_satis', data);
     res.json({ success: true, message: count + ' kayıt eklendi' });
   } catch(e) { res.status(500).json({ success: false, message: e.message }); }
