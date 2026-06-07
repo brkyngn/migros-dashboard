@@ -68,6 +68,12 @@ async function initializeDatabase() {
     )
   `);
 
+  // Duplicate önleme için unique constraint (varsa atla)
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS gunluk_satis_unique_idx
+    ON gunluk_satis ("DateTransaction","StoreNumber","SupplierItemNumber","BarcodeNumber")
+  `).catch(() => {});
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS stok (
       id SERIAL PRIMARY KEY,
@@ -330,7 +336,8 @@ app.post('/api/import-excel-satis', async (req, res) => {
         const vals = Object.keys(safeRow).map((_, i) => '$' + (i + 1)).join(',');
         const values = Object.values(safeRow);
         const r = await pool.query(
-          `INSERT INTO gunluk_satis (${cols}) VALUES (${vals})`, values
+          `INSERT INTO gunluk_satis (${cols}) VALUES (${vals})
+           ON CONFLICT ("DateTransaction","StoreNumber","SupplierItemNumber","BarcodeNumber") DO NOTHING`, values
         );
         inserted += r.rowCount;
       } catch(e) { skipped++; }
