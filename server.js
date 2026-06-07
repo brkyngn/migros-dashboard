@@ -445,6 +445,17 @@ app.delete('/api/temizle-bozuk-tarih', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/fix-date-format', async (req, res) => {
+  try {
+    const r = await pool.query(`
+      UPDATE gunluk_satis
+      SET "DateTransaction" = TO_CHAR(TO_DATE("DateTransaction", 'MM/DD/YYYY'), 'YYYY-MM-DD')
+      WHERE "DateTransaction" LIKE '%/%'
+    `);
+    res.json({ success: true, updated: r.rowCount });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString(), env: CONFIG.NODE_ENV }));
 
 app.post('/api/login', async (req, res) => {
