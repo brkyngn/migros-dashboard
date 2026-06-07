@@ -58,7 +58,9 @@ export default function SalesPerformance() {
     { label: '21–31', from: 21, to: 31 },
   ].map(p => {
     const filtered = sales.filter(s => {
-      const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
+      const shifted = s.DateTransaction.slice(0, 10);
+      const raw = new Date(shifted + 'T00:00:00Z');
+      if (isNaN(raw.getTime())) return false;
       raw.setUTCDate(raw.getUTCDate() + 1);
       const day = raw.getUTCDate();
       return day >= p.from && day <= p.to;

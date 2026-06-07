@@ -27,9 +27,12 @@ export default function Dashboard({ onNavigate }: Props) {
   const totalQty = products.reduce((s, p) => s + p.quantity, 0);
   const allStores = new Set(sales.map(s => s.StoreNumber)).size;
   const days = new Set(sales.map(s => {
-    const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
-    raw.setUTCDate(raw.getUTCDate() + 1);
-    return raw.toISOString().slice(0, 10);
+    try {
+      const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
+      if (isNaN(raw.getTime())) return s.DateTransaction.slice(0, 10);
+      raw.setUTCDate(raw.getUTCDate() + 1);
+      return raw.toISOString().slice(0, 10);
+    } catch { return s.DateTransaction.slice(0, 10); }
   })).size;
   const avgDailyRevenue = days > 0 ? totalRevenue / days : 0;
 

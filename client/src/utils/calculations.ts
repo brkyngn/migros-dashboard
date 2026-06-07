@@ -50,9 +50,9 @@ export const groupByProduct = (sales: DailySale[]): ProductSummary[] => {
 export const groupByWeek = (sales: DailySale[]) => {
   const map: Record<string, Record<string, number>> = {};
   sales.forEach(s => {
-    const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
-    raw.setUTCDate(raw.getUTCDate() + 1);
-    const week = `Hf ${getWeekNum(raw)}`;
+    const d = new Date(shiftDateStr(s.DateTransaction) + 'T00:00:00Z');
+    if (isNaN(d.getTime())) return;
+    const week = `Hf ${getWeekNum(d)}`;
     if (!map[week]) map[week] = {};
     const sku = s.SupplierItemNumber;
     map[week][sku] = (map[week][sku] || 0) + (parseFloat(s.QuantitySold) || 0);
@@ -70,22 +70,29 @@ export const groupByDayOfWeek = (sales: DailySale[]) => {
   const map: Record<string, Record<string, number>> = {};
   days.forEach(d => { map[d] = {}; });
   sales.forEach(s => {
-    const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
-    raw.setUTCDate(raw.getUTCDate() + 1);
-    const day = days[(raw.getUTCDay() + 6) % 7];
+    const d2 = new Date(shiftDateStr(s.DateTransaction) + 'T00:00:00Z');
+    if (isNaN(d2.getTime())) return;
+    const day = days[(d2.getUTCDay() + 6) % 7];
     const sku = s.SupplierItemNumber;
     map[day][sku] = (map[day][sku] || 0) + (parseFloat(s.QuantitySold) || 0);
   });
   return days.map(d => ({ day: d, ...map[d] }));
 };
 
+// DateTransaction +1 gün (UTC→TR offset)
+function shiftDateStr(dt: string): string {
+  try {
+    const raw = new Date(dt.slice(0, 10) + 'T00:00:00Z');
+    if (isNaN(raw.getTime())) return dt.slice(0, 10);
+    raw.setUTCDate(raw.getUTCDate() + 1);
+    return raw.toISOString().slice(0, 10);
+  } catch { return dt.slice(0, 10); }
+}
+
 export const groupByDay = (sales: DailySale[]) => {
   const map: Record<string, Record<string, number>> = {};
   sales.forEach(s => {
-    // Migros API tarihi UTC bazlı, Türkiye saatine göre +1 gün eklenmeli
-    const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
-    raw.setUTCDate(raw.getUTCDate() + 1);
-    const date = raw.toISOString().slice(0, 10);
+    const date = shiftDateStr(s.DateTransaction);
     if (!map[date]) map[date] = {};
     const sku = s.SupplierItemNumber;
     map[date][sku] = (map[date][sku] || 0) + (parseFloat(s.QuantitySold) || 0);
