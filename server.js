@@ -17,6 +17,7 @@ app.use(express.static(clientDist));
 // Eski HTML araçlar sayfası
 app.get('/tools', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'tools.html')));
 app.get('/karsilastirma', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'karsilastirma.html')));
+app.get('/gunluk-stok', (req, res) => res.sendFile(path.join(__dirname, 'frontend', 'gunluk-stok.html')));
 app.use('/frontend', express.static(path.join(__dirname, 'frontend')));
 
 const CONFIG = {
