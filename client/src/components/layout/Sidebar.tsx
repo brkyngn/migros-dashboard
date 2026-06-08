@@ -3,16 +3,16 @@ import type { Page } from '../../types';
 const NAV = [
   { id: 'dashboard' as Page,    icon: '🏠', label: 'Yönetim Özeti' },
   { id: 'daily-report' as Page, icon: '📅', label: 'Günlük Satış' },
-  { id: 'daily-stock' as Page,  icon: '📦', label: 'Günlük Stok' },
-  { id: 'sales' as Page,        icon: '📈', label: 'Satış Performansı' },
-  { id: 'stock-alerts' as Page, icon: '⚠️', label: 'Stok Uyarıları' },
+  { id: 'daily-stock' as Page,       icon: '📦', label: 'Günlük Stok' },
+  { id: 'stock-comparison' as Page,  icon: '📊', label: 'Stok Karşılaştırma' },
+  { id: 'sales' as Page,             icon: '📈', label: 'Satış Performansı' },
+  { id: 'stock-alerts' as Page,      icon: '⚠️', label: 'Stok Uyarıları' },
   { id: 'turnover' as Page,     icon: '🔄', label: 'Devir Hızı' },
   { id: 'reports' as Page,      icon: '📄', label: 'Raporlar' },
 ];
 
 const EXT_LINKS = [
-  { href: '/karsilastirma', icon: '📊', label: 'Stok Karşılaştırma' },
-  { href: '/tools',         icon: '🛠️', label: 'Araçlar' },
+  { href: '/tools', icon: '🛠️', label: 'Araçlar' },
 ];
 
 interface Props { current: Page; onChange: (p: Page) => void; }
