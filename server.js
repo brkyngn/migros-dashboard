@@ -29,6 +29,10 @@ const CONFIG = {
 };
 
 // Türkiye saatine göre tarih (UTC+3)
+function trToday() {
+  const now = new Date();
+  return new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString().split('T')[0];
+}
 function trYesterday() {
   const now = new Date();
   return new Date(now.getTime() + 3 * 60 * 60 * 1000 - 86400000).toISOString().split('T')[0];
