@@ -175,8 +175,8 @@ async function fetchStok() {
     'Stok'
   );
   if (!r || !r.data) return 0;
-  // Verinin temsil ettiği tarih = dün
-  const veriTarihi = trYesterday();
+  // Verinin temsil ettiği tarih = bugün (stok anlık snapshot)
+  const veriTarihi = trToday();
   const stamped = r.data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
   return saveToDatabase('stok', stamped);
 }

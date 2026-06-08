@@ -294,7 +294,7 @@ app.post('/api/kaydet-stok', async (req, res) => {
   const data = req.body.data;
   if (!data || !data.length) return res.json({ success: false, message: 'Veri yok' });
   try {
-    const veriTarihi = trYesterday();
+    const veriTarihi = trToday();
     const stamped = data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
     const count = await saveToDatabase('stok', stamped);
     res.json({ success: true, message: count + ' kayıt eklendi (' + veriTarihi + ')' });
@@ -493,6 +493,18 @@ app.delete('/api/gunluk-satis-temizle', async (req, res) => {
   try {
     await pool.query('TRUNCATE TABLE gunluk_satis RESTART IDENTITY');
     res.json({ success: true, message: 'gunluk_satis tablosu temizlendi' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Stok veri_tarihi düzelt: createdat'a göre TR günü ata
+app.post('/api/fix-stok-tarih', async (req, res) => {
+  try {
+    const r = await pool.query(`
+      UPDATE stok
+      SET veri_tarihi = (createdat AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Istanbul')::DATE::TEXT
+      WHERE createdat IS NOT NULL
+    `);
+    res.json({ success: true, updated: r.rowCount });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
