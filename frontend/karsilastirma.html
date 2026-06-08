@@ -293,7 +293,7 @@ async function compare(t1, t2) {
     const gunlukSatis = pf(newR?.GUNLUK_SATIS_MIKTARI || oldR?.GUNLUK_SATIS_MIKTARI);
     const gunlukYukleme = pf(newR?.GUNLUK_YUKLEME_MIKTARI || oldR?.GUNLUK_YUKLEME_MIKTARI);
 
-    urunler[urunAdi].locations.push({
+    urunler[urunKod].locations.push({
       teslimNoktasi: ref.TESLIM_NOKTASI_ACIKLAMA,
       teslimNoktasiId: ref.TESLIM_NOKTASI_ID,
       il: ref.IL_ADI,
