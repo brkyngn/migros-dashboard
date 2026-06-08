@@ -48,7 +48,7 @@ const pool = new Pool({
 let token = '';
 let connectionCodeRaw = '';
 let tokenTimestamp = 0;
-const TOKEN_MAX_AGE = 4 * 60 * 1000; // 4 dakika
+const TOKEN_MAX_AGE = 25 * 60 * 1000; // 25 dakika (Migros token 30 dk geçerli)
 
 // Tabloları oluştur
 async function initializeDatabase() {
