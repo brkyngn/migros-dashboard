@@ -37,6 +37,13 @@ export default function Sidebar({ current, onChange }: Props) {
             <span>{item.label}</span>
           </button>
         ))}
+        <a
+          href="/gunluk-stok"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-white/50 hover:text-white/80 hover:bg-white/8 no-underline"
+        >
+          <span>📦</span>
+          <span>Günlük Stok</span>
+        </a>
       </nav>
       <div className="px-3 py-2 border-t border-white/10">
         <div className="text-white/30 text-[10px] uppercase tracking-wider px-3 py-2">Harici Sayfalar</div>
