@@ -197,6 +197,23 @@ app.post('/auth/login', (req, res) => {
   proxyToMigros('/auth/login', 'POST', { 'Content-Length': Buffer.byteLength(body) }, body, res);
 });
 
+// Geçici debug — gerçek bağlantı hatasını görmek için
+app.get('/api/debug-migros', async (req, res) => {
+  return new Promise(() => {
+    const req2 = https.request({
+      hostname: 'api-prod.migros.com.tr', port: 443,
+      path: '/rest/b2b/api/v1/auth/login', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': 2 },
+      timeout: 15000
+    }, r => {
+      res.json({ connected: true, statusCode: r.statusCode });
+    });
+    req2.on('error', (e) => res.json({ connected: false, error: e.message, code: e.code }));
+    req2.on('timeout', () => { req2.destroy(); res.json({ connected: false, error: 'timeout' }); });
+    req2.end('{}');
+  });
+});
+
 app.get('/report/*', (req, res) => {
   proxyToMigros(req.url, 'GET', {
     'Authorization': req.headers['authorization'] || '',
