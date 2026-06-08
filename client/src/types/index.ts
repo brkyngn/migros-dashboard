@@ -50,4 +50,4 @@ export interface FetchLog {
   cekme_tarihi: string;
 }
 
-export type Page = 'dashboard' | 'sales' | 'stock-alerts' | 'turnover' | 'reports' | 'daily-report';
+export type Page = 'dashboard' | 'sales' | 'stock-alerts' | 'turnover' | 'reports' | 'daily-report' | 'daily-stock';

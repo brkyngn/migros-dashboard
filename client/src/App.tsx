@@ -7,6 +7,7 @@ import StockAlerts from './pages/StockAlerts';
 import TurnoverAnalysis from './pages/TurnoverAnalysis';
 import Reports from './pages/Reports';
 import DailyReport from './pages/DailyReport';
+import DailyStock from './pages/DailyStock';
 import type { Page } from './types';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
           {page === 'daily-report'  && <DailyReport />}
           {page === 'sales'         && <SalesPerformance />}
           {page === 'stock-alerts'  && <StockAlerts initialFilter={stockFilter} />}
+          {page === 'daily-stock'   && <DailyStock />}
           {page === 'turnover'      && <TurnoverAnalysis />}
           {page === 'reports'       && <Reports />}
         </main>
