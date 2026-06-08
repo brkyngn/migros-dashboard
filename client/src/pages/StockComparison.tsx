@@ -226,7 +226,7 @@ export default function StockComparison() {
   );
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
 
       {/* Tarih seçici */}
       <div className="flex items-center gap-4 flex-wrap">
@@ -271,9 +271,9 @@ export default function StockComparison() {
           {/* ── KPI KARTLAR ── */}
           <section>
             <SectionHead color="#6b7280">Güncel Durum — Karşılaştırma</SectionHead>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
               {products.map(p => (
-                <div key={p.kod} className="grid grid-cols-4 gap-3">
+                <div key={p.kod} className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     {
                       label: `${p.shortName} Net Stok`,
@@ -327,7 +327,7 @@ export default function StockComparison() {
           {/* ── STOK AZALANLAR ── */}
           <section>
             <SectionHead color="#dc2626">Stok Azalan Lokasyonlar (En Büyükler)</SectionHead>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {products.map(p => {
                 const top = p.azalanlar.slice(0, 10);
                 const maxDrop = top.length ? Math.abs(top[0].fark) : 1;
@@ -371,7 +371,7 @@ export default function StockComparison() {
           {/* ── STOK ARTANLAR ── */}
           <section>
             <SectionHead color="#16a34a">Stok Artan Lokasyonlar — Yükleme Yapıldı</SectionHead>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {products.map(p => {
                 const top = p.artanlar.slice(0, 10);
                 const maxUp = top.length ? top[0].fark : 1;
@@ -414,7 +414,7 @@ export default function StockComparison() {
           {/* ── RAF DURUM DEĞİŞİMİ ── */}
           <section>
             <SectionHead color="#2563eb">Raf Durumu Değişimleri</SectionHead>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {products.map(p => (
                 <div key={p.kod + '-raf-bos'} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                   <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between"
@@ -447,7 +447,7 @@ export default function StockComparison() {
               ))}
             </div>
 
-            <div className="grid grid-cols-2 gap-4 mt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
               {products.map(p => (
                 <div key={p.kod + '-raf-geldi'} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                   <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between"
@@ -488,7 +488,7 @@ export default function StockComparison() {
           {/* ── KRİTİK RAF BOŞ ── */}
           <section>
             <SectionHead color="#dc2626">Kritik: Raf Boş + Yüksek Satış Hızı</SectionHead>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {products.map(p => (
                 <div key={p.kod} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                   <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between"
@@ -568,7 +568,7 @@ function DmGrid({ products }: { products: ProductInfo[] }) {
   if (!sorted.length) return <div className="text-gray-400 text-sm">DM lokasyonu bulunamadı</div>;
 
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
       {sorted.map(([dmName, prods]) => {
         const anyEmpty = Object.values(prods).some(l => l.yeniStok === 0);
         const anyLow   = Object.values(prods).some(l => l.yeniStok > 0 && l.yeniStok < 30);

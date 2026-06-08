@@ -15,11 +15,19 @@ const EXT_LINKS = [
   { href: '/tools', icon: '🛠️', label: 'Araçlar' },
 ];
 
-interface Props { current: Page; onChange: (p: Page) => void; }
+interface Props { current: Page; onChange: (p: Page) => void; isOpen?: boolean; }
 
-export default function Sidebar({ current, onChange }: Props) {
+export default function Sidebar({ current, onChange, isOpen = false }: Props) {
   return (
-    <aside className="w-60 min-h-screen flex-shrink-0 flex flex-col" style={{ background: '#1A1A2E' }}>
+    <aside
+      className={`
+        fixed md:static inset-y-0 left-0 z-50
+        w-60 min-h-screen flex-shrink-0 flex flex-col
+        transform transition-transform duration-200 ease-in-out
+        ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}
+      style={{ background: '#1A1A2E' }}
+    >
       <div className="px-6 py-6 border-b border-white/10">
         <div className="text-white font-bold text-lg leading-tight">KittyCady</div>
         <div className="text-white/40 text-xs mt-0.5">Migros B2B Dashboard</div>

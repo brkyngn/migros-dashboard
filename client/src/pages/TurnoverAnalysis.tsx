@@ -102,7 +102,7 @@ export default function TurnoverAnalysis() {
   if (loading) return <div className="p-8"><LoadingSkeleton rows={8} /></div>;
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
       {dates.length > 0 && (
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-500">Veri Tarihi:</span>
@@ -113,7 +113,7 @@ export default function TurnoverAnalysis() {
         </div>
       )}
 
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
         <KPICard label="Stok Devir Hızı" value={`${metrics.turnover.toFixed(2)}×`} sub="aylık" color="#1E6B4A" />
         <KPICard label="Ort. Stok Günü" value={`${Math.round(metrics.avgDays)} gün`} color="#1A3A5C" />
         <KPICard label="Yıllık Devir Tahmini" value={`${(metrics.turnover * 12).toFixed(1)}×`} color="#f5a623" />
@@ -121,7 +121,7 @@ export default function TurnoverAnalysis() {
         <KPICard label="Yükleme/Satış" value={`${metrics.loadRatio.toFixed(2)}×`} color="#6d28d9" />
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="font-semibold text-gray-800 mb-4">Stok Gün Dağılımı (Lokasyon Sayısı)</div>
           <ResponsiveContainer width="100%" height={200}>

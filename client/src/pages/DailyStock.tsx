@@ -142,7 +142,7 @@ export default function DailyStock() {
   }
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
 
       {/* Tarih seçici */}
       <div className="flex items-center gap-4 flex-wrap">
@@ -170,7 +170,7 @@ export default function DailyStock() {
       {loading ? <LoadingSkeleton rows={8} /> : (
         <>
           {/* KPI Kartları */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             {[
               { label: 'Toplam Stok',    value: formatNum(stats.toplamStok),       icon: '📦', color: '#f5a623' },
               { label: 'Stok Tutarı',    value: fmtTL(stats.toplamTutar),          icon: '💰', color: '#0f3460' },
@@ -188,7 +188,7 @@ export default function DailyStock() {
           </div>
 
           {/* Durum kartları */}
-          <div className="grid grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
               { label: '⛔ Sıfır Stok',    val: stats.sifir,  color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
               { label: '⚠️ Kritik <7g',    val: stats.kritik, color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
@@ -206,7 +206,7 @@ export default function DailyStock() {
           </div>
 
           {/* Grafikler */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
 
             {/* Ürün bazında bar */}
             <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -261,7 +261,7 @@ export default function DailyStock() {
           </div>
 
           {/* Tablolar */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
 
             {/* İl tablosu */}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

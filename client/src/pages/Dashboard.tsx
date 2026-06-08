@@ -41,9 +41,9 @@ export default function Dashboard({ onNavigate }: Props) {
   const empty = sales.length === 0;
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
       {/* KPI Row */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <KPICard label="Toplam Net Ciro" value={formatTL(totalRevenue)} sub="KDV hariç" color="#16a34a" />
         <KPICard label="Toplam Satış Adedi" value={formatNum(totalQty)} color="#C0392B" />
         <KPICard label="Aktif Mağaza" value={formatNum(allStores)} color="#f5a623" />
@@ -56,7 +56,7 @@ export default function Dashboard({ onNavigate }: Props) {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         {/* Sol: Ürün tablosu + Haftalık chart */}
         <div className="space-y-6">
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -136,7 +136,7 @@ export default function Dashboard({ onNavigate }: Props) {
           {dailyLoss > 0 && (
             <div className="bg-red-900 text-white rounded-xl p-5 space-y-3">
               <div className="font-semibold text-sm opacity-80">Tahmini Ciro Kaybı (Sıfır Stok)</div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-2">
                 <div><div className="text-xs opacity-60">Günlük</div><div className="font-bold text-lg">{formatTL(dailyLoss)}</div></div>
                 <div><div className="text-xs opacity-60">Haftalık</div><div className="font-bold text-lg">{formatTL(dailyLoss * 7)}</div></div>
                 <div><div className="text-xs opacity-60">Aylık</div><div className="font-bold text-lg">{formatTL(dailyLoss * 30)}</div></div>

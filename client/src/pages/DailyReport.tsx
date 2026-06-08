@@ -125,7 +125,7 @@ export default function DailyReport() {
   }
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
 
       {/* Tarih seçici */}
       <div className="flex items-center gap-4 flex-wrap">
@@ -153,7 +153,7 @@ export default function DailyReport() {
       {loading ? <LoadingSkeleton rows={8} /> : (
         <>
           {/* KPI Kartları */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             {[
               { label: 'Toplam Satış Adedi', value: formatNum(stats.totalQty), icon: '📦', color: AC_COLOR },
               { label: 'Net Ciro', value: formatTL(stats.totalRev), icon: '💰', color: '#16a34a' },
@@ -171,7 +171,7 @@ export default function DailyReport() {
           </div>
 
           {/* Ürün Kartları */}
-          <div className="grid grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
             {stats.products.map(p => (
               <div key={p.sku} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: `3px solid ${p.color}` }}>
@@ -183,7 +183,7 @@ export default function DailyReport() {
                   </div>
                   <div className="text-3xl font-black" style={{ color: p.color }}>{formatNum(p.qty)}</div>
                 </div>
-                <div className="grid grid-cols-4 divide-x divide-gray-100 px-0 py-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-gray-100 px-0 py-3">
                   {[
                     { label: 'Net Ciro', value: formatTL(p.rev) },
                     { label: 'Ort. Fiyat', value: formatTL(p.avgPrice) },
@@ -210,7 +210,7 @@ export default function DailyReport() {
           </div>
 
           {/* Alt grid: mağaza tablosu + şehir grafiği */}
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
 
             {/* Top mağazalar */}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

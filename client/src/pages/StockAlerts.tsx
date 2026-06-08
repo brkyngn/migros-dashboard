@@ -70,7 +70,7 @@ export default function StockAlerts({ initialFilter }: Props) {
   }));
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
       {/* Banner */}
       {(counts.zero + counts.critical) > 0 && (
         <div className="bg-red-700 text-white rounded-xl px-6 py-4 flex items-center justify-between">

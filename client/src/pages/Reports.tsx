@@ -78,7 +78,7 @@ BT Pet Ürünleri Ltd. Şti. / KittyCady`);
   const copyEmail = () => { navigator.clipboard.writeText(emailText); setCopied(true); setTimeout(() => setCopied(false), 2000); };
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-8">
       {/* Report Preview */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="bg-sidebar text-white px-6 py-4 flex justify-between items-center">
@@ -90,7 +90,7 @@ BT Pet Ürünleri Ltd. Şti. / KittyCady`);
           <button onClick={() => window.print()} className="bg-ac text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700">⬇ PDF İndir</button>
         </div>
         <div className="p-6 space-y-6">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="p-4 bg-gray-50 rounded-xl">
               <div className="text-xs text-gray-400 mb-1">Toplam Net Ciro</div>
               <div className="text-2xl font-bold text-gray-800">{formatTL(totalRev)}</div>
@@ -122,7 +122,7 @@ BT Pet Ürünleri Ltd. Şti. / KittyCady`);
       {/* Excel exports */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <div className="font-semibold text-gray-800 mb-4">Excel Dışa Aktarma</div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {[
             { type: 'sales', label: '📊 Günlük Satış Excel\'i İndir', color: 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' },
             { type: 'stock', label: '📦 Stok Raporu Excel\'i İndir', color: 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100' },

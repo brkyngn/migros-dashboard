@@ -68,7 +68,7 @@ export default function SalesPerformance() {
   const maxRev = Math.max(...periods3.map(p => p.rev));
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
@@ -103,7 +103,7 @@ export default function SalesPerformance() {
       </div>
 
       {/* Product cards */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {products.map(p => (
           <div key={p.sku} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-100">
@@ -138,7 +138,7 @@ export default function SalesPerformance() {
       </div>
 
       {/* DOW + Periodic */}
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <div className="font-semibold text-gray-800 mb-4">Haftanın Günlerine Göre</div>
           <ResponsiveContainer width="100%" height={180}>
