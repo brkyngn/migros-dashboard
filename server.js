@@ -197,6 +197,17 @@ app.post('/auth/login', (req, res) => {
   proxyToMigros('/auth/login', 'POST', { 'Content-Length': Buffer.byteLength(body) }, body, res);
 });
 
+// Yerel dashboard girişi — Migros API'ye ihtiyaç duymaz
+app.post('/api/local-login', (req, res) => {
+  const { password } = req.body;
+  const LOCAL_PASS = process.env.LOCAL_DASHBOARD_PASS || 'kittycady2024';
+  if (password === LOCAL_PASS) {
+    res.json({ success: true });
+  } else {
+    res.status(401).json({ success: false, message: 'Hatalı şifre' });
+  }
+});
+
 
 app.get('/report/*', (req, res) => {
   proxyToMigros(req.url, 'GET', {

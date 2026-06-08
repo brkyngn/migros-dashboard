@@ -63,10 +63,6 @@
             <h1 class="login-title">📊 Migros B2B</h1>
             <p class="login-subtitle">Rapor Yönetim Sistemi</p>
             <div id="loginError" class="alert alert-error" style="display: none;"></div>
-            <div class="alert alert-warning">
-                <strong>⚠️ Önemli!</strong>
-                <p style="margin: 0.5rem 0 0 0;">Proxy çalışıyor: <code style="background: #fff; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-family: monospace; font-size: 0.7rem;">node proxy-restful.js</code></p>
-            </div>
             <div class="form-group">
                 <label>Kullanıcı Adı</label>
                 <input type="text" id="username" placeholder="B2B kullanıcı adınız">
@@ -75,7 +71,14 @@
                 <label>Şifre</label>
                 <input type="password" id="password" placeholder="B2B şifreniz">
             </div>
-            <button id="loginBtn">🔐 Giriş Yap</button>
+            <button id="loginBtn">🔐 Migros ile Giriş Yap</button>
+            <div style="margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid #e5e7eb;">
+                <p style="font-size:.8rem;color:#6b7280;margin-bottom:.75rem;text-align:center;">Migros API erişilemiyorsa:</p>
+                <div class="form-group" style="margin-bottom:.5rem;">
+                    <input type="password" id="localPassword" placeholder="Dashboard şifresi">
+                </div>
+                <button id="localLoginBtn" style="background:#4b5563;">📂 Excel Modu ile Giriş</button>
+            </div>
         </div>
     </div>
 
@@ -252,7 +255,39 @@
                 loginError.style.display = 'block';
             } finally {
                 loginBtn.disabled = false;
-                loginBtn.textContent = '🔐 Giriş Yap';
+                loginBtn.textContent = '🔐 Migros ile Giriş Yap';
+            }
+        });
+
+        document.getElementById('localLoginBtn').addEventListener('click', async () => {
+            const localPass = document.getElementById('localPassword').value;
+            const loginError = document.getElementById('loginError');
+            const btn = document.getElementById('localLoginBtn');
+            if (!localPass) { loginError.textContent = '⚠️ Şifre gerekli!'; loginError.style.display = 'block'; return; }
+            btn.disabled = true; btn.textContent = '🔄 Kontrol ediliyor...'; loginError.style.display = 'none';
+            try {
+                const res = await fetch('/api/local-login', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: localPass })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    username = 'Dashboard';
+                    document.getElementById('loginScreen').style.display = 'none';
+                    document.getElementById('dashboardScreen').classList.add('active');
+                    document.getElementById('welcomeText').textContent = '📂 Excel Modu — Migros API devre dışı';
+                    document.getElementById('stokBtn').style.display = 'none';
+                    document.getElementById('gunlukBtn').style.display = 'none';
+                    renderFilters();
+                } else {
+                    loginError.textContent = '⚠️ ' + (data.message || 'Hatalı şifre!');
+                    loginError.style.display = 'block';
+                }
+            } catch(err) {
+                loginError.textContent = '⚠️ Hata: ' + err.message;
+                loginError.style.display = 'block';
+            } finally {
+                btn.disabled = false; btn.textContent = '📂 Excel Modu ile Giriş';
             }
         });
 
