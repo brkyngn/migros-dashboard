@@ -269,16 +269,21 @@ async function compare(t1, t2) {
 
   const allKeys = new Set([...Object.keys(oldMap), ...Object.keys(newMap)]);
 
-  // Ürün bazında analiz
-  const urunler = {}; // urunAdi -> { locations: [...] }
+  // Ürün bazında analiz — ürün kodu (SATICI_URUN_KODU) bazında grupla, varyantlar birleşsin
+  const urunler = {}; // urunKod -> { locations: [], displayName: ... }
 
   allKeys.forEach(key => {
     const oldR = oldMap[key];
     const newR = newMap[key];
     const ref = newR || oldR;
     const urunAdi = ref.URUN_SATICI_ADI;
+    // Grupla: SATICI_URUN_KODU varsa onu kullan, yoksa URUN_MAP üzerinden normalize et
+    const urunKod = ref.SATICI_URUN_KODU || getUrun(urunAdi).short || urunAdi;
 
-    if (!urunler[urunAdi]) urunler[urunAdi] = { locations: [] };
+    if (!urunler[urunKod]) urunler[urunKod] = { locations: [], displayName: urunAdi };
+    // Görünen adı en uzun olanla güncelle (en açıklayıcı)
+    if (urunAdi && urunAdi.length > urunler[urunKod].displayName.length)
+      urunler[urunKod].displayName = urunAdi;
 
     const eskiStok = pf(oldR?.STOK_MIKTARI);
     const yeniStok = pf(newR?.STOK_MIKTARI);
@@ -305,7 +310,8 @@ async function compare(t1, t2) {
 
   // Her ürün için analiz
   const urunEntries = Object.entries(urunler);
-  const urunInfos = urunEntries.map(([name, data]) => {
+  const urunInfos = urunEntries.map(([kod, data]) => {
+    const name = data.displayName;
     const u = getUrun(name);
     const locs = data.locations;
     const toplamEski = locs.reduce((s,l) => s + l.eskiStok, 0);
