@@ -111,7 +111,8 @@ async function loginMigros() {
     const req = https.request({
       hostname: 'api-prod.migros.com.tr', port: 443,
       path: '/rest/b2b/api/v1/auth/login', method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) }
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
+      timeout: 15000
     }, res => {
       let d = '';
       res.on('data', c => d += c);
@@ -124,6 +125,7 @@ async function loginMigros() {
       });
     });
     req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
     req.end(postData);
   });
 }
@@ -607,7 +609,11 @@ function analyzeGunlukSatis(data) {
 async function startServer() {
   try {
     await initializeDatabase();
-    await loginMigros();
+    // Login'i arka planda yap — başlamayı bloklama
+    loginMigros().then(ok => {
+      if (ok) console.log('✅ Migros login başarılı');
+      else console.warn('⚠️ Migros login başarısız, sonraki istekte yeniden denenecek');
+    }).catch(() => {});
     app.listen(CONFIG.PORT, () => {
       console.log(`\n🚀 Server: http://localhost:${CONFIG.PORT} | DB: PostgreSQL | Satıcı: ${CONFIG.SATICI_ID}\n`);
     });
