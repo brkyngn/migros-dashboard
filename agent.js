@@ -211,14 +211,14 @@ async function runStok() {
   }
 }
 
-// Scheduler — Günlük Satış 06:00, Stok 06:15
+// Scheduler — Günlük Satış 06:00, Stok 06:30
 function startScheduler() {
-  console.log('\n⏰ Scheduler başladı. Günlük Satış: 06:00 | Stok: 06:15\n');
+  console.log('\n⏰ Scheduler başladı. Günlük Satış: 06:00 | Stok: 06:30\n');
   setInterval(() => {
     const h = new Date().getHours();
     const m = new Date().getMinutes();
     if (h === 6 && m === 0)  runGunlukSatis();
-    if (h === 6 && m === 15) runStok();
+    if (h === 6 && m === 30) runStok();
   }, 60000);
 }
 
@@ -229,7 +229,7 @@ async function start() {
 ============================================================
 👤 Kullanıcı: ${CONFIG.USERNAME}
 🏢 Satıcı ID: ${CONFIG.SATICI_ID}
-⏰ Günlük Satış: 06:00 | Stok: 06:15
+⏰ Günlük Satış: 06:00 | Stok: 06:30
 🌍 Environment: ${CONFIG.NODE_ENV}
 ============================================================
   `);
