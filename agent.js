@@ -99,7 +99,7 @@ function fetchData(endpoint, reportName) {
       hostname: 'api-prod.migros.com.tr', port: 443,
       path: '/rest/b2b/api/v1' + endpoint, method: 'GET',
       headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': cc },
-      timeout: 120000
+      timeout: 300000
     }, res => {
       let d = '';
       res.on('data', c => d += c);
