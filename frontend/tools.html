@@ -154,7 +154,7 @@
         let username = sessionStorage.getItem('mgr_user') || '';
         let activeTab = 'isleticiSatis';
         let tokenTimestamp = parseInt(sessionStorage.getItem('mgr_token_ts') || '0');
-        const TOKEN_MAX_AGE = 4 * 60 * 1000; // 4 dakika
+        const TOKEN_MAX_AGE = 25 * 60 * 1000; // 25 dakika (Migros token 30 dk geçerli)
 
         // Token expire olduysa otomatik yenile
         async function ensureFreshToken() {
@@ -513,12 +513,14 @@
                     for (let ci = 0; ci < chunks.length; ci++) {
                         const { start, end } = chunks[ci];
                         btn.textContent = `🔄 Yükleniyor... (${ci + 1}/${chunks.length} hafta)`;
-                        const baseEp = `/report/get-gunluk-satis?raporBaslangic=${start}&raporBitis=${end}&saticild=${saticiIds}`;
+                        const baseEp = `/report/get-gunluk-satis?raporBaslangic=${start}&raporBitis=${end}&saticiIds=${saticiIds}`;
 
                         const firstRes = await fetch(`${PROXY_URL}${baseEp}&pageno=1`, {
                             headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': hashedConnectionCode }
                         });
-                        const firstData = await firstRes.json();
+                        let firstData;
+                        try { firstData = await firstRes.json(); }
+                        catch(e) { showAlert('error', `Hata: Sunucu geçersiz yanıt döndürdü (${firstRes.status}). Migros bağlantısı kontrol edin.`); btn.disabled=false; btn.textContent='🔍 Raporu Getir'; return; }
                         lastResponse = firstData;
                         const totalPages = firstData.totalPages || 1;
                         if (firstData.data) allItems = allItems.concat(firstData.data);
@@ -527,7 +529,8 @@
                             const r = await fetch(`${PROXY_URL}${baseEp}&pageno=${p}`, {
                                 headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': hashedConnectionCode }
                             });
-                            const d = await r.json();
+                            let d;
+                            try { d = await r.json(); } catch(e) { break; }
                             if (d.data) allItems = allItems.concat(d.data);
                         }
                     }
