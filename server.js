@@ -313,7 +313,7 @@ app.post('/api/kaydet-stok', async (req, res) => {
   const data = req.body.data;
   if (!data || !data.length) return res.json({ success: false, message: 'Veri yok' });
   try {
-    const veriTarihi = trToday();
+    const veriTarihi = trYesterday();
     const stamped = data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
     const count = await saveToDatabase('stok', stamped);
     res.json({ success: true, message: count + ' kayıt eklendi (' + veriTarihi + ')' });
