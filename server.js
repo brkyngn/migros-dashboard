@@ -462,7 +462,7 @@ app.post('/api/agent-gunluk', async (req, res) => {
   res.json({ status: 'started', message: 'Günlük Satış çekme başladı.' });
   (async () => {
     const yesterday = trYesterday();
-    const r = await agentFetch(`/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticild=${CONFIG.SATICI_ID}`, 'Günlük Satış');
+    const r = await agentFetch(`/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticiIds=${CONFIG.SATICI_ID}`, 'Günlük Satış');
     let count = 0;
     if (r && r.data) {
       let flat = r.data;
@@ -482,7 +482,7 @@ app.post('/api/agent-calistir', async (req, res) => {
     if (sr && sr.data) sc = await saveToDatabase('stok', sr.data);
 
     const yesterday = trYesterday();
-    const gr = await agentFetch(`/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticild=${CONFIG.SATICI_ID}`, 'Günlük Satış');
+    const gr = await agentFetch(`/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticiIds=${CONFIG.SATICI_ID}`, 'Günlük Satış');
     let gc = 0;
     if (gr && gr.data) {
       let flat = gr.data;

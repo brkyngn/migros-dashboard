@@ -159,7 +159,7 @@ async function logToDb(raporAdi, durum, satirSayisi, mesaj) {
 async function fetchGunlukSatis() {
   const yesterday = trYesterday();
   const r = await fetchData(
-    `/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticild=${CONFIG.SATICI_ID}`,
+    `/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticiIds=${CONFIG.SATICI_ID}`,
     'Günlük Satış'
   );
   if (!r || !r.data) return 0;
