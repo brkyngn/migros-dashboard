@@ -128,6 +128,10 @@ async function ensureColumns(tableName, keys) {
 }
 
 // DB'ye kaydet
+const CONFLICT_CLAUSES = {
+  gunluk_satis: 'ON CONFLICT ("DateTransaction","StoreNumber","SupplierItemNumber","BarcodeNumber") DO NOTHING',
+};
+
 async function saveToDatabase(tableName, data) {
   if (!data || !data.length) return 0;
   const keys = Object.keys(data[0]);
@@ -135,10 +139,11 @@ async function saveToDatabase(tableName, data) {
   let count = 0;
   const cols = keys.map(k => '"' + k + '"').join(',');
   const placeholders = keys.map((_, i) => '$' + (i+1)).join(',');
+  const conflict = CONFLICT_CLAUSES[tableName] || '';
   for (const row of data) {
     const values = keys.map(k => row[k] !== undefined ? row[k] : null);
     try {
-      const r = await pool.query(`INSERT INTO ${tableName} (${cols}) VALUES (${placeholders})`, values);
+      const r = await pool.query(`INSERT INTO ${tableName} (${cols}) VALUES (${placeholders}) ${conflict}`, values);
       count += r.rowCount;
     } catch(e) { /* skip */ }
   }
@@ -215,8 +220,10 @@ async function runStok() {
 function startScheduler() {
   console.log('\n⏰ Scheduler başladı. Günlük Satış: 06:00 | Stok: 06:30\n');
   setInterval(() => {
-    const h = new Date().getHours();
-    const m = new Date().getMinutes();
+    const now = new Date();
+    const trTime = new Date(now.getTime() + 3 * 60 * 60 * 1000); // UTC+3 Türkiye
+    const h = trTime.getUTCHours();
+    const m = trTime.getUTCMinutes();
     if (h === 6 && m === 0)  runGunlukSatis();
     if (h === 6 && m === 30) runStok();
   }, 60000);

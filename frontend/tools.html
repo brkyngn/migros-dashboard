@@ -574,7 +574,13 @@
                     headers: { 'Content-Type': 'application/json', 'Authorization': token, 'ConnectionCode': hashedConnectionCode }
                 });
 
-                const data = await response.json();
+                let data;
+                try {
+                    data = await response.json();
+                } catch(e) {
+                    showAlert('error', `Hata: Sunucu geçersiz yanıt döndürdü (HTTP ${response.status}). Migros bağlantısı kontrol edin.`);
+                    return;
+                }
 
                 if (data.data && data.data.length > 0) {
                     currentData = data;
