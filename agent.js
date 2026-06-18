@@ -14,6 +14,18 @@ function trYesterday() {
   return tr.toISOString().split('T')[0];
 }
 
+// Tarih string'ini YYYY-MM-DD formatına normalize et
+function normalizeDateStr(val) {
+  if (!val) return val;
+  const s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (mdy) return `${mdy[3]}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}`;
+  const dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+  return s.slice(0, 10);
+}
+
 const CONFIG = {
   USERNAME:  process.env.MIGROS_USERNAME,
   PASSWORD:  process.env.MIGROS_PASSWORD,
@@ -160,72 +172,132 @@ async function logToDb(raporAdi, durum, satirSayisi, mesaj) {
   } catch(e) {}
 }
 
-// Günlük Satış çek
+// Günlük Satış çek — null dönerse API hatası (retry gerekli)
 async function fetchGunlukSatis() {
   const yesterday = trYesterday();
   const r = await fetchData(
     `/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticiIds=${CONFIG.SATICI_ID}`,
     'Günlük Satış'
   );
-  if (!r || !r.data) return 0;
-  let flat = r.data;
+  if (!r) throw new Error('API yanıt vermedi');
+  let flat = r.data || [];
   if (flat.length > 0 && flat[0].SalesList) flat = flat.flatMap(i => i.SalesList || []);
+  // DateTransaction formatını normalize et (MM/DD/YYYY → YYYY-MM-DD)
+  flat = flat.map(row => ({
+    ...row,
+    DateTransaction: row.DateTransaction ? normalizeDateStr(row.DateTransaction) : row.DateTransaction
+  }));
   return saveToDatabase('gunluk_satis', flat);
 }
 
-// Stok çek
+// Stok çek — null dönerse API hatası (retry gerekli)
 async function fetchStok() {
   const r = await fetchData(
     `/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`,
     'Stok'
   );
-  if (!r || !r.data) return 0;
+  if (!r) throw new Error('API yanıt vermedi');
   // Migros stok verisi her zaman bir önceki günün snapshot'ıdır
   const veriTarihi = trYesterday();
-  const stamped = r.data.map(row => ({ ...row, veri_tarihi: veriTarihi }));
+  const stamped = (r.data || []).map(row => ({ ...row, veri_tarihi: veriTarihi }));
   return saveToDatabase('stok', stamped);
 }
 
-// Günlük Satış çalıştır
+// Günlük Satış çalıştır — true: başarılı (tekrar deneme), false: hata (retry)
 async function runGunlukSatis() {
   console.log('\n📊 Günlük Satış çekme başladı:', new Date().toLocaleString('tr-TR'));
   const ok = await login();
-  if (!ok) { await logToDb('Günlük Satış', 'BAŞARISIZ', 0, 'Login başarısız'); return; }
+  if (!ok) {
+    await logToDb('Günlük Satış', 'BAŞARISIZ', 0, 'Login başarısız');
+    return false;
+  }
   try {
     const count = await fetchGunlukSatis();
-    console.log(`   → Günlük Satış: ${count} kayıt`);
-    await logToDb('Günlük Satış', 'BAŞARILI', count, `Günlük Satış: ${count}`);
+    console.log(`   → Günlük Satış: ${count} yeni kayıt`);
+    await logToDb('Günlük Satış', 'BAŞARILI', count, `Günlük Satış: ${count} kayıt`);
+    return true;
   } catch(e) {
     console.error('❌ Günlük Satış hatası:', e.message);
     await logToDb('Günlük Satış', 'HATA', 0, e.message);
+    return false;
   }
 }
 
-// Stok çalıştır
+// Stok çalıştır — true: başarılı, false: hata (retry)
 async function runStok() {
   console.log('\n📦 Stok çekme başladı:', new Date().toLocaleString('tr-TR'));
   const ok = await login();
-  if (!ok) { await logToDb('Stok', 'BAŞARISIZ', 0, 'Login başarısız'); return; }
+  if (!ok) {
+    await logToDb('Stok', 'BAŞARISIZ', 0, 'Login başarısız');
+    return false;
+  }
   try {
     const count = await fetchStok();
-    console.log(`   → Stok: ${count} kayıt`);
-    await logToDb('Stok', 'BAŞARILI', count, `Stok: ${count}`);
+    console.log(`   → Stok: ${count} yeni kayıt`);
+    await logToDb('Stok', 'BAŞARILI', count, `Stok: ${count} kayıt`);
+    return true;
   } catch(e) {
     console.error('❌ Stok hatası:', e.message);
     await logToDb('Stok', 'HATA', 0, e.message);
+    return false;
   }
 }
 
-// Scheduler — Günlük Satış 06:00, Stok 06:30
+// Scheduler
+// Günlük Satış: 06:00'dan itibaren her 30 dakikada bir, başarılı olana kadar
+// Stok:        06:15'ten itibaren her 30 dakikada bir, başarılı olana kadar (min 15 dk sonra)
+// Her gece 00:00'da bayraklar sıfırlanır
 function startScheduler() {
-  console.log('\n⏰ Scheduler başladı. Günlük Satış: 06:00 | Stok: 06:30\n');
+  let satisBasarili = false;
+  let stokBasarili = false;
+  let satisCalisiyor = false;
+  let stokCalisiyor = false;
+
+  console.log('\n⏰ Scheduler başladı.');
+  console.log('   Günlük Satış: 06:00 TR | Stok: 06:15 TR');
+  console.log('   Başarısız olursa her 30 dakikada bir yeniden dener\n');
+
   setInterval(() => {
     const now = new Date();
-    const trTime = new Date(now.getTime() + 3 * 60 * 60 * 1000); // UTC+3 Türkiye
+    const trTime = new Date(now.getTime() + 3 * 60 * 60 * 1000); // UTC+3
     const h = trTime.getUTCHours();
     const m = trTime.getUTCMinutes();
-    if (h === 6 && m === 0)  runGunlukSatis();
-    if (h === 6 && m === 30) runStok();
+    const totalMin = h * 60 + m;
+
+    // Gece yarısı sıfırla
+    if (h === 0 && m === 0) {
+      satisBasarili = false;
+      stokBasarili = false;
+      console.log('🔄 Günlük bayraklar sıfırlandı');
+    }
+
+    // Günlük Satış: 06:00 (360dk), 06:30, 07:00, 07:30... her 30 dakika
+    if (!satisBasarili && !satisCalisiyor && totalMin >= 360 && (totalMin - 360) % 30 === 0) {
+      satisCalisiyor = true;
+      runGunlukSatis().then(ok => {
+        satisCalisiyor = false;
+        if (ok) {
+          satisBasarili = true;
+          console.log('✅ Günlük Satış bugün için tamamlandı, bir daha denenmeyecek');
+        } else {
+          console.log('⚠️  Günlük Satış başarısız, 30 dakika sonra tekrar denenecek');
+        }
+      });
+    }
+
+    // Stok: 06:15 (375dk), 06:45, 07:15, 07:45... her 30 dakika
+    if (!stokBasarili && !stokCalisiyor && totalMin >= 375 && (totalMin - 375) % 30 === 0) {
+      stokCalisiyor = true;
+      runStok().then(ok => {
+        stokCalisiyor = false;
+        if (ok) {
+          stokBasarili = true;
+          console.log('✅ Stok bugün için tamamlandı, bir daha denenemeyecek');
+        } else {
+          console.log('⚠️  Stok başarısız, 30 dakika sonra tekrar denenecek');
+        }
+      });
+    }
   }, 60000);
 }
 
@@ -236,7 +308,8 @@ async function start() {
 ============================================================
 👤 Kullanıcı: ${CONFIG.USERNAME}
 🏢 Satıcı ID: ${CONFIG.SATICI_ID}
-⏰ Günlük Satış: 06:00 | Stok: 06:30
+⏰ Günlük Satış: 06:00 TR | Stok: 06:15 TR
+🔄 Başarısız olursa 30dk'da bir yeniden dener
 🌍 Environment: ${CONFIG.NODE_ENV}
 ============================================================
   `);
