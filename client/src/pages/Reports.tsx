@@ -4,6 +4,8 @@ import type { DailySale, StockRecord } from '../types';
 import { SKU_AC, SKU_MB, PRODUCTS } from '../utils/calculations';
 import { formatTL, formatNum } from '../utils/formatters';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 // Tarih yardımcıları
 function toISO(d: Date) { return d.toISOString().split('T')[0]; }
@@ -122,22 +124,63 @@ export default function Reports() {
     };
   }, [sales, stock]);
 
-  const printReport = () => window.print();
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  const downloadPDF = async () => {
+    const element = document.getElementById('migros-rapor');
+    if (!element) return;
+    setPdfLoading(true);
+    try {
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#f9fafb',
+      });
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfW = pdf.internal.pageSize.getWidth();
+      const pdfH = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentW = pdfW - margin * 2;
+      const contentH = pdfH - margin * 2;
+
+      // mm per pixel
+      const mmPerPx = contentW / canvas.width;
+      const totalHeightMM = canvas.height * mmPerPx;
+      const pageHeightPx = contentH / mmPerPx;
+
+      let yOffset = 0;
+      let pageIndex = 0;
+
+      while (yOffset < canvas.height) {
+        if (pageIndex > 0) pdf.addPage();
+
+        // Slice the canvas for this page
+        const sliceH = Math.min(pageHeightPx, canvas.height - yOffset);
+        const sliceCanvas = document.createElement('canvas');
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceH;
+        const ctx = sliceCanvas.getContext('2d')!;
+        ctx.drawImage(canvas, 0, yOffset, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+
+        const imgData = sliceCanvas.toDataURL('image/png');
+        pdf.addImage(imgData, 'PNG', margin, margin, contentW, sliceH * mmPerPx);
+
+        yOffset += pageHeightPx;
+        pageIndex++;
+      }
+
+      pdf.save(`migros-rapor-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
 
   if (loading) return <div className="p-8"><LoadingSkeleton rows={10} /></div>;
 
   return (
     <>
-      {/* Print-only CSS */}
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #migros-rapor, #migros-rapor * { visibility: visible; }
-          #migros-rapor { position: fixed; top: 0; left: 0; width: 100%; padding: 0; margin: 0; }
-          .no-print { display: none !important; }
-          @page { margin: 1.5cm; size: A4; }
-        }
-      `}</style>
 
       <div className="p-4 md:p-8">
         <div id="migros-rapor" className="max-w-4xl mx-auto space-y-6">
@@ -153,10 +196,11 @@ export default function Reports() {
                 </div>
               </div>
               <button
-                onClick={printReport}
-                className="no-print bg-white/10 hover:bg-white/20 text-white border border-white/20 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center gap-2"
+                onClick={downloadPDF}
+                disabled={pdfLoading}
+                className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 disabled:opacity-60"
               >
-                ⬇ PDF İndir
+                {pdfLoading ? '⏳ Hazırlanıyor...' : '⬇ PDF İndir'}
               </button>
             </div>
             {/* Tarih bandı */}
@@ -387,8 +431,8 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* Footer (sadece print'te görünür) */}
-          <div className="hidden print:block text-center text-xs text-gray-400 pt-4 border-t border-gray-200">
+          {/* Footer */}
+          <div className="text-center text-xs text-gray-400 pt-4 border-t border-gray-200">
             BT Pet Ürünleri Ltd. Şti. · KittyCady · Migros Rapor · {formatDateTR(today)}
           </div>
 
