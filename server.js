@@ -3,7 +3,7 @@ const https = require('https');
 const cors = require('cors');
 const path = require('path');
 const { Pool } = require('pg');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 require('dotenv').config();
 
 const app = express();
@@ -678,12 +678,11 @@ function buildEmailHTML(data) {
 }
 
 app.post('/api/trigger-email', async (req, res) => {
-  const emailFrom = process.env.EMAIL_FROM;
-  const emailTo   = process.env.EMAIL_TO;
-  const emailPass = process.env.EMAIL_PASS;
+  const apiKey  = process.env.RESEND_API_KEY;
+  const emailTo = process.env.EMAIL_TO;
 
-  if (!emailFrom || !emailTo || !emailPass) {
-    return res.status(400).json({ success: false, message: 'EMAIL_FROM, EMAIL_TO veya EMAIL_PASS env var eksik' });
+  if (!apiKey || !emailTo) {
+    return res.status(400).json({ success: false, message: 'RESEND_API_KEY veya EMAIL_TO env var eksik' });
   }
 
   try {
@@ -691,17 +690,15 @@ app.post('/api/trigger-email', async (req, res) => {
     const data = await buildEmailData(date);
     const html = buildEmailHTML(data);
 
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: emailFrom, pass: emailPass },
-    });
-
-    await transporter.sendMail({
-      from: `"Migros B2B Rapor" <${emailFrom}>`,
+    const resend = new Resend(apiKey);
+    const { error } = await resend.emails.send({
+      from: 'Migros B2B Rapor <onboarding@resend.dev>',
       to: emailTo,
       subject: `Migros Günlük Rapor · ${formatDateTR(date)}`,
       html,
     });
+
+    if (error) throw new Error(JSON.stringify(error));
 
     console.log(`✅ Manuel email gönderildi → ${emailTo}`);
     await logToDb('Manuel Email', 'BAŞARILI', 0, `Günlük rapor gönderildi: ${date}`);

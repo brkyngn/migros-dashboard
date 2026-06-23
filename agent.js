@@ -1,6 +1,6 @@
 const https = require('https');
 const { Pool } = require('pg');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 require('dotenv').config();
 
 // Türkiye saatine göre tarih hesapla (UTC+3)
@@ -51,9 +51,8 @@ const CONFIG = {
   PASSWORD:  process.env.MIGROS_PASSWORD,
   SATICI_ID: process.env.SATICI_ID,
   NODE_ENV:  process.env.NODE_ENV || 'development',
-  EMAIL_FROM: process.env.EMAIL_FROM,
-  EMAIL_TO:   process.env.EMAIL_TO,
-  EMAIL_PASS: process.env.EMAIL_PASS,
+  EMAIL_TO:      process.env.EMAIL_TO,
+  RESEND_API_KEY: process.env.RESEND_API_KEY,
 };
 
 const pool = new Pool({
@@ -435,8 +434,8 @@ function buildEmailHTML(data) {
 }
 
 async function sendDailyReport() {
-  if (!CONFIG.EMAIL_FROM || !CONFIG.EMAIL_TO || !CONFIG.EMAIL_PASS) {
-    console.log('⚠️  Email env var eksik (EMAIL_FROM, EMAIL_TO, EMAIL_PASS), mail atlanıyor');
+  if (!CONFIG.RESEND_API_KEY || !CONFIG.EMAIL_TO) {
+    console.log('⚠️  Email env var eksik (RESEND_API_KEY, EMAIL_TO), mail atlanıyor');
     return;
   }
 
@@ -446,17 +445,15 @@ async function sendDailyReport() {
     const data = await buildEmailData(date);
     const html = buildEmailHTML(data);
 
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: CONFIG.EMAIL_FROM, pass: CONFIG.EMAIL_PASS },
-    });
-
-    await transporter.sendMail({
-      from: `"Migros B2B Rapor" <${CONFIG.EMAIL_FROM}>`,
+    const resend = new Resend(CONFIG.RESEND_API_KEY);
+    const { error } = await resend.emails.send({
+      from: 'Migros B2B Rapor <onboarding@resend.dev>',
       to: CONFIG.EMAIL_TO,
       subject: `Migros Günlük Rapor · ${formatDateTR(date)}`,
       html,
     });
+
+    if (error) throw new Error(JSON.stringify(error));
 
     console.log(`✅ Günlük rapor maili gönderildi → ${CONFIG.EMAIL_TO}`);
     await logToDb('Email', 'BAŞARILI', 0, `Günlük rapor gönderildi: ${date}`);
