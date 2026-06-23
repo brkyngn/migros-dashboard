@@ -454,7 +454,7 @@ function resendSend(apiKey, to, subject, html) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       from: `Migros B2B Rapor <${CONFIG.EMAIL_FROM}>`,
-      to: [to],
+      to: to.split(',').map(e => e.trim()).filter(Boolean),
       subject,
       html,
     });
