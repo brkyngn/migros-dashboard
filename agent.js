@@ -1,5 +1,6 @@
 const https = require('https');
 const { Pool } = require('pg');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 // Türkiye saatine göre tarih hesapla (UTC+3)
@@ -26,11 +27,33 @@ function normalizeDateStr(val) {
   return s.slice(0, 10);
 }
 
+// Tarihi Türkçe biçimlendir
+function formatDateTR(d) {
+  if (!d) return '';
+  const months = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+  const [y, m, day] = d.split('-');
+  return `${parseInt(day)} ${months[parseInt(m)]} ${y}`;
+}
+
+function formatTL(n) {
+  return '₺' + Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function formatNum(n) {
+  return Number(n || 0).toLocaleString('tr-TR');
+}
+
+const SKU_AC = '41075315';
+const SKU_MB = '41075312';
+const SKU_NAMES = { [SKU_AC]: 'Active Carbon 5L', [SKU_MB]: 'Marseille Breeze 5L' };
+
 const CONFIG = {
   USERNAME:  process.env.MIGROS_USERNAME,
   PASSWORD:  process.env.MIGROS_PASSWORD,
   SATICI_ID: process.env.SATICI_ID,
-  NODE_ENV:  process.env.NODE_ENV || 'development'
+  NODE_ENV:  process.env.NODE_ENV || 'development',
+  EMAIL_FROM: process.env.EMAIL_FROM,
+  EMAIL_TO:   process.env.EMAIL_TO,
+  EMAIL_PASS: process.env.EMAIL_PASS,
 };
 
 const pool = new Pool({
@@ -182,7 +205,6 @@ async function fetchGunlukSatis() {
   if (!r) throw new Error('API yanıt vermedi');
   let flat = r.data || [];
   if (flat.length > 0 && flat[0].SalesList) flat = flat.flatMap(i => i.SalesList || []);
-  // DateTransaction formatını normalize et (MM/DD/YYYY → YYYY-MM-DD)
   flat = flat.map(row => ({
     ...row,
     DateTransaction: row.DateTransaction ? normalizeDateStr(row.DateTransaction) : row.DateTransaction
@@ -197,13 +219,12 @@ async function fetchStok() {
     'Stok'
   );
   if (!r) throw new Error('API yanıt vermedi');
-  // Migros stok verisi her zaman bir önceki günün snapshot'ıdır
   const veriTarihi = trYesterday();
   const stamped = (r.data || []).map(row => ({ ...row, veri_tarihi: veriTarihi }));
   return saveToDatabase('stok', stamped);
 }
 
-// Günlük Satış çalıştır — true: başarılı (tekrar deneme), false: hata (retry)
+// Günlük Satış çalıştır — true: başarılı, false: hata (retry)
 async function runGunlukSatis() {
   console.log('\n📊 Günlük Satış çekme başladı:', new Date().toLocaleString('tr-TR'));
   const ok = await login();
@@ -243,19 +264,224 @@ async function runStok() {
   }
 }
 
-// Scheduler
+// ─── EMAIL ───────────────────────────────────────────────────────────────────
+
+async function buildEmailData(date) {
+  // Satış verileri
+  const satisRes = await pool.query(`
+    SELECT
+      "SupplierItemNumber" AS sku,
+      SUM(CAST("QuantitySold" AS FLOAT))   AS total_qty,
+      SUM(CAST("NetSalesValue" AS FLOAT))  AS total_rev,
+      COUNT(DISTINCT "StoreNumber")        AS store_count
+    FROM gunluk_satis
+    WHERE "DateTransaction" = $1
+    GROUP BY "SupplierItemNumber"
+  `, [date]);
+
+  const satisToplam = satisRes.rows.reduce((a, r) => ({
+    qty: a.qty + parseFloat(r.total_qty || 0),
+    rev: a.rev + parseFloat(r.total_rev || 0),
+  }), { qty: 0, rev: 0 });
+
+  const satisBySku = {};
+  satisRes.rows.forEach(r => { satisBySku[r.sku] = r; });
+
+  // Stok kolonlarını bul (SATICI_URUN_KODU veya URUN_SATICI_ADI'ndan SKU eşle)
+  let stokBySku = {};
+  let sifirMagazaCount = 0;
+  try {
+    const stokCols = await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'stok'
+    `);
+    const cols = stokCols.rows.map(r => r.column_name);
+
+    const skuCol   = cols.includes('SATICI_URUN_KODU') ? '"SATICI_URUN_KODU"'
+                   : cols.includes('URUN_SATICI_ADI')  ? '"URUN_SATICI_ADI"'
+                   : null;
+    const qtyCol   = cols.includes('STOK_MIKTARI')    ? '"STOK_MIKTARI"'    : null;
+    const storeCol = cols.includes('MAGAZA_NO')        ? '"MAGAZA_NO"'
+                   : cols.includes('StoreNumber')      ? '"StoreNumber"'     : null;
+
+    if (skuCol && qtyCol && storeCol) {
+      const stokRes = await pool.query(`
+        SELECT
+          ${skuCol}                                             AS sku,
+          SUM(CAST(${qtyCol} AS FLOAT))                        AS total_stok,
+          COUNT(DISTINCT ${storeCol})                          AS magaza_count,
+          COUNT(DISTINCT CASE WHEN CAST(${qtyCol} AS FLOAT) = 0 THEN ${storeCol} END) AS sifir_magaza
+        FROM stok
+        WHERE veri_tarihi = $1
+          AND ${skuCol} IN ($2, $3)
+        GROUP BY ${skuCol}
+      `, [date, SKU_AC, SKU_MB]);
+      stokRes.rows.forEach(r => { stokBySku[r.sku] = r; });
+
+      // Hiç stok olmayan mağaza: tüm SKU'lar için stok = 0 olan mağazalar
+      if (storeCol) {
+        const sifirRes = await pool.query(`
+          SELECT ${storeCol} AS magaza
+          FROM stok
+          WHERE veri_tarihi = $1
+            AND ${skuCol} IN ($2, $3)
+          GROUP BY ${storeCol}
+          HAVING MAX(CAST(${qtyCol} AS FLOAT)) = 0
+        `, [date, SKU_AC, SKU_MB]);
+        sifirMagazaCount = sifirRes.rowCount;
+      }
+    }
+  } catch(e) {
+    console.error('⚠️ Stok verisi çekilemedi (email):', e.message);
+  }
+
+  return { date, satisBySku, satisToplam, stokBySku, sifirMagazaCount };
+}
+
+function buildEmailHTML(data) {
+  const { date, satisBySku, satisToplam, stokBySku, sifirMagazaCount } = data;
+  const dateTR = formatDateTR(date);
+
+  const skuRows = [SKU_AC, SKU_MB].map(sku => {
+    const s = satisBySku[sku] || {};
+    const st = stokBySku[sku] || {};
+    const qty   = parseFloat(s.total_qty  || 0);
+    const rev   = parseFloat(s.total_rev  || 0);
+    const stores = parseInt(s.store_count || 0);
+    const stok  = parseFloat(st.total_stok || 0);
+    const sifir = parseInt(st.sifir_magaza || 0);
+    const totalMagaza = parseInt(st.magaza_count || 0);
+    return `
+      <tr>
+        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;font-weight:600;color:#1a3a5c">${SKU_NAMES[sku]}</td>
+        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right">${formatNum(Math.round(qty))}</td>
+        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right">${formatTL(rev)}</td>
+        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right">${stores}</td>
+        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right">${formatNum(Math.round(stok))}</td>
+        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right;color:${sifir > 0 ? '#dc2626' : '#16a34a'}">${sifir} / ${totalMagaza}</td>
+      </tr>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="tr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f6f9;font-family:Arial,Helvetica,sans-serif;color:#374151">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f9;padding:32px 0">
+    <tr><td align="center">
+      <table width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)">
+
+        <!-- Header -->
+        <tr><td style="background:linear-gradient(135deg,#1a3a5c 0%,#c0392b 100%);padding:28px 32px">
+          <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:rgba(255,255,255,.7);text-transform:uppercase;margin-bottom:6px">Migros B2B · Günlük Rapor</div>
+          <div style="font-size:26px;font-weight:800;color:#ffffff">${dateTR}</div>
+          <div style="font-size:12px;color:rgba(255,255,255,.6);margin-top:4px">Satış ve Stok Özeti</div>
+        </td></tr>
+
+        <!-- KPI Kutuları -->
+        <tr><td style="padding:24px 32px 8px">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td width="33%" style="text-align:center;padding:16px;background:#f9fafb;border-radius:8px">
+                <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Toplam Satış</div>
+                <div style="font-size:28px;font-weight:800;color:#c0392b">${formatNum(Math.round(satisToplam.qty))}</div>
+                <div style="font-size:11px;color:#9ca3af;margin-top:2px">adet</div>
+              </td>
+              <td width="4%"></td>
+              <td width="33%" style="text-align:center;padding:16px;background:#f9fafb;border-radius:8px">
+                <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Net Ciro</div>
+                <div style="font-size:28px;font-weight:800;color:#16a34a">${formatTL(satisToplam.rev)}</div>
+                <div style="font-size:11px;color:#9ca3af;margin-top:2px">TL</div>
+              </td>
+              <td width="4%"></td>
+              <td width="33%" style="text-align:center;padding:16px;background:#f9fafb;border-radius:8px">
+                <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Stoksuz Mağaza</div>
+                <div style="font-size:28px;font-weight:800;color:${sifirMagazaCount > 0 ? '#dc2626' : '#16a34a'}">${sifirMagazaCount}</div>
+                <div style="font-size:11px;color:#9ca3af;margin-top:2px">mağaza</div>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+
+        <!-- Tablo Başlık -->
+        <tr><td style="padding:24px 32px 8px">
+          <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px">SKU Bazlı Detay</div>
+          <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px">
+            <thead>
+              <tr style="background:#f3f4f6">
+                <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Ürün</th>
+                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Adet</th>
+                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Ciro</th>
+                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Mağaza</th>
+                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Stok</th>
+                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">0 Stok/Top</th>
+              </tr>
+            </thead>
+            <tbody>${skuRows}</tbody>
+          </table>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding:20px 32px 28px;border-top:1px solid #f0f0f0;margin-top:8px">
+          <div style="font-size:11px;color:#9ca3af;text-align:center">
+            Bu rapor Migros B2B agent tarafından otomatik oluşturulmuştur · ${new Date().toLocaleString('tr-TR')}
+          </div>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function sendDailyReport() {
+  if (!CONFIG.EMAIL_FROM || !CONFIG.EMAIL_TO || !CONFIG.EMAIL_PASS) {
+    console.log('⚠️  Email env var eksik (EMAIL_FROM, EMAIL_TO, EMAIL_PASS), mail atlanıyor');
+    return;
+  }
+
+  console.log('\n📧 Günlük rapor maili hazırlanıyor...');
+  try {
+    const date = trYesterday();
+    const data = await buildEmailData(date);
+    const html = buildEmailHTML(data);
+
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: CONFIG.EMAIL_FROM, pass: CONFIG.EMAIL_PASS },
+    });
+
+    await transporter.sendMail({
+      from: `"Migros B2B Rapor" <${CONFIG.EMAIL_FROM}>`,
+      to: CONFIG.EMAIL_TO,
+      subject: `Migros Günlük Rapor · ${formatDateTR(date)}`,
+      html,
+    });
+
+    console.log(`✅ Günlük rapor maili gönderildi → ${CONFIG.EMAIL_TO}`);
+    await logToDb('Email', 'BAŞARILI', 0, `Günlük rapor gönderildi: ${date}`);
+  } catch(e) {
+    console.error('❌ Mail gönderme hatası:', e.message);
+    await logToDb('Email', 'HATA', 0, e.message);
+  }
+}
+
+// ─── SCHEDULER ───────────────────────────────────────────────────────────────
 // Günlük Satış: 06:00'dan itibaren her 30 dakikada bir, başarılı olana kadar
-// Stok:        06:15'ten itibaren her 30 dakikada bir, başarılı olana kadar (min 15 dk sonra)
+// Stok:        06:15'ten itibaren her 30 dakikada bir, başarılı olana kadar
+// Her ikisi başarılı → günlük rapor maili gönderilir
 // Her gece 00:00'da bayraklar sıfırlanır
 function startScheduler() {
   let satisBasarili = false;
-  let stokBasarili = false;
+  let stokBasarili  = false;
   let satisCalisiyor = false;
-  let stokCalisiyor = false;
+  let stokCalisiyor  = false;
+  let emailGonderildi = false;
 
   console.log('\n⏰ Scheduler başladı.');
   console.log('   Günlük Satış: 06:00 TR | Stok: 06:15 TR');
-  console.log('   Başarısız olursa her 30 dakikada bir yeniden dener\n');
+  console.log('   Başarısız olursa her 30 dakikada bir yeniden dener');
+  console.log('   Her ikisi başarılı → günlük rapor maili gönderilir\n');
 
   setInterval(() => {
     const now = new Date();
@@ -266,35 +492,46 @@ function startScheduler() {
 
     // Gece yarısı sıfırla
     if (h === 0 && m === 0) {
-      satisBasarili = false;
-      stokBasarili = false;
+      satisBasarili  = false;
+      stokBasarili   = false;
+      emailGonderildi = false;
       console.log('🔄 Günlük bayraklar sıfırlandı');
     }
 
-    // Günlük Satış: 06:00 (360dk), 06:30, 07:00, 07:30... her 30 dakika
+    // Günlük Satış: 06:00 (360dk), 06:30, 07:00... her 30 dakika
     if (!satisBasarili && !satisCalisiyor && totalMin >= 360 && (totalMin - 360) % 30 === 0) {
       satisCalisiyor = true;
       runGunlukSatis().then(ok => {
         satisCalisiyor = false;
         if (ok) {
           satisBasarili = true;
-          console.log('✅ Günlük Satış bugün için tamamlandı, bir daha denenmeyecek');
+          console.log('✅ Günlük Satış bugün için tamamlandı');
         } else {
           console.log('⚠️  Günlük Satış başarısız, 30 dakika sonra tekrar denenecek');
+        }
+        // Her ikisi de başarılıysa mail at
+        if (satisBasarili && stokBasarili && !emailGonderildi) {
+          emailGonderildi = true;
+          sendDailyReport();
         }
       });
     }
 
-    // Stok: 06:15 (375dk), 06:45, 07:15, 07:45... her 30 dakika
+    // Stok: 06:15 (375dk), 06:45, 07:15... her 30 dakika
     if (!stokBasarili && !stokCalisiyor && totalMin >= 375 && (totalMin - 375) % 30 === 0) {
       stokCalisiyor = true;
       runStok().then(ok => {
         stokCalisiyor = false;
         if (ok) {
           stokBasarili = true;
-          console.log('✅ Stok bugün için tamamlandı, bir daha denenemeyecek');
+          console.log('✅ Stok bugün için tamamlandı');
         } else {
           console.log('⚠️  Stok başarısız, 30 dakika sonra tekrar denenecek');
+        }
+        // Her ikisi de başarılıysa mail at
+        if (satisBasarili && stokBasarili && !emailGonderildi) {
+          emailGonderildi = true;
+          sendDailyReport();
         }
       });
     }
@@ -310,6 +547,7 @@ async function start() {
 🏢 Satıcı ID: ${CONFIG.SATICI_ID}
 ⏰ Günlük Satış: 06:00 TR | Stok: 06:15 TR
 🔄 Başarısız olursa 30dk'da bir yeniden dener
+📧 Mail: ${CONFIG.EMAIL_TO || '(tanımlı değil)'}
 🌍 Environment: ${CONFIG.NODE_ENV}
 ============================================================
   `);
