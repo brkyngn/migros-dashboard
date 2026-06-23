@@ -679,7 +679,7 @@ function buildEmailHTML(data) {
 function resendSend(apiKey, to, subject, html) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
-      from: 'Migros B2B Rapor <onboarding@resend.dev>',
+      from: `Migros B2B Rapor <${process.env.EMAIL_FROM || 'rapor@kittycady.com'}>`,
       to: [to],
       subject,
       html,

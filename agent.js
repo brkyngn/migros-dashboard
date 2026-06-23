@@ -50,7 +50,8 @@ const CONFIG = {
   PASSWORD:  process.env.MIGROS_PASSWORD,
   SATICI_ID: process.env.SATICI_ID,
   NODE_ENV:  process.env.NODE_ENV || 'development',
-  EMAIL_TO:      process.env.EMAIL_TO,
+  EMAIL_FROM:     process.env.EMAIL_FROM || 'rapor@kittycady.com',
+  EMAIL_TO:       process.env.EMAIL_TO,
   RESEND_API_KEY: process.env.RESEND_API_KEY,
 };
 
@@ -452,7 +453,7 @@ function buildEmailHTML(data) {
 function resendSend(apiKey, to, subject, html) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
-      from: 'Migros B2B Rapor <onboarding@resend.dev>',
+      from: `Migros B2B Rapor <${CONFIG.EMAIL_FROM}>`,
       to: [to],
       subject,
       html,
