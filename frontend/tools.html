@@ -93,6 +93,7 @@
                     <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;">
                         <button id="stokBtn" class="btn-success" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem;">📦 Stok Çek</button>
                         <button id="gunlukBtn" class="btn-success" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem;">📈 Günlük Satış Çek</button>
+                        <button id="emailBtn" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem;background:#6366f1;">📧 Rapor Maili Gönder</button>
                         <button id="logoutBtn" style="width:auto;padding:.6rem 1.2rem;">🚪 Çıkış Yap</button>
                     </div>
                 </div>
@@ -326,6 +327,26 @@
                 startCountdown(btn, '📈 Günlük Satış Çek', 600);
             } catch(e) {
                 showAlert('error', 'Hata: ' + e.message);
+            }
+        });
+
+        document.getElementById('emailBtn').addEventListener('click', async function() {
+            var btn = document.getElementById('emailBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Gönderiliyor...';
+            try {
+                const r = await fetch('/api/trigger-email', { method: 'POST' });
+                const d = await r.json();
+                if (d.success) {
+                    showAlert('success', '✅ Günlük rapor maili gönderildi! (' + d.date + ')');
+                } else {
+                    showAlert('error', '❌ Mail gönderilemedi: ' + d.message);
+                }
+            } catch(e) {
+                showAlert('error', 'Hata: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '📧 Rapor Maili Gönder';
             }
         });
 
