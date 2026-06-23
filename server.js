@@ -3,7 +3,6 @@ const https = require('https');
 const cors = require('cors');
 const path = require('path');
 const { Pool } = require('pg');
-const { Resend } = require('resend');
 require('dotenv').config();
 
 const app = express();
@@ -677,6 +676,41 @@ function buildEmailHTML(data) {
 </body></html>`;
 }
 
+function resendSend(apiKey, to, subject, html) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      from: 'Migros B2B Rapor <onboarding@resend.dev>',
+      to: [to],
+      subject,
+      html,
+    });
+    const req = https.request({
+      hostname: 'api.resend.com', port: 443,
+      path: '/emails', method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+      timeout: 30000,
+    }, r => {
+      let d = '';
+      r.on('data', c => d += c);
+      r.on('end', () => {
+        try {
+          const parsed = JSON.parse(d);
+          if (r.statusCode >= 200 && r.statusCode < 300) resolve(parsed);
+          else reject(new Error(parsed.message || JSON.stringify(parsed)));
+        } catch(e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Resend API timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
 app.post('/api/trigger-email', async (req, res) => {
   const apiKey  = process.env.RESEND_API_KEY;
   const emailTo = process.env.EMAIL_TO;
@@ -689,17 +723,7 @@ app.post('/api/trigger-email', async (req, res) => {
     const date = trYesterday();
     const data = await buildEmailData(date);
     const html = buildEmailHTML(data);
-
-    const resend = new Resend(apiKey);
-    const { error } = await resend.emails.send({
-      from: 'Migros B2B Rapor <onboarding@resend.dev>',
-      to: emailTo,
-      subject: `Migros Günlük Rapor · ${formatDateTR(date)}`,
-      html,
-    });
-
-    if (error) throw new Error(JSON.stringify(error));
-
+    await resendSend(apiKey, emailTo, `Migros Günlük Rapor · ${formatDateTR(date)}`, html);
     console.log(`✅ Manuel email gönderildi → ${emailTo}`);
     await logToDb('Manuel Email', 'BAŞARILI', 0, `Günlük rapor gönderildi: ${date}`);
     res.json({ success: true, message: `Rapor gönderildi: ${emailTo}`, date });

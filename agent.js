@@ -1,6 +1,5 @@
 const https = require('https');
 const { Pool } = require('pg');
-const { Resend } = require('resend');
 require('dotenv').config();
 
 // Türkiye saatine göre tarih hesapla (UTC+3)
@@ -211,15 +210,32 @@ async function fetchGunlukSatis() {
   return saveToDatabase('gunluk_satis', flat);
 }
 
-// Stok çek — null dönerse API hatası (retry gerekli)
+// next_url'den sadece path'i çıkar
+function extractPath(nextUrl) {
+  if (!nextUrl) return null;
+  const marker = '/rest/b2b/api/v1';
+  const idx = nextUrl.indexOf(marker);
+  return idx !== -1 ? nextUrl.slice(idx + marker.length) : nextUrl;
+}
+
+// Stok çek — tüm sayfaları çeker (pagination)
 async function fetchStok() {
-  const r = await fetchData(
-    `/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`,
-    'Stok'
-  );
-  if (!r) throw new Error('API yanıt vermedi');
+  const allData = [];
+  let endpoint = `/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`;
+  let page = 1;
+
+  while (endpoint) {
+    const r = await fetchData(endpoint, `Stok sayfa ${page}`);
+    if (!r) throw new Error('API yanıt vermedi');
+    allData.push(...(r.data || []));
+    endpoint = extractPath(r.next_url || r.nextUrl || r.NextUrl || null);
+    page++;
+    if (page > 20) break; // güvenlik limiti
+  }
+
+  console.log(`   → Stok toplam: ${allData.length} kayıt (${page - 1} sayfa)`);
   const veriTarihi = trYesterday();
-  const stamped = (r.data || []).map(row => ({ ...row, veri_tarihi: veriTarihi }));
+  const stamped = allData.map(row => ({ ...row, veri_tarihi: veriTarihi }));
   return saveToDatabase('stok', stamped);
 }
 
@@ -433,6 +449,41 @@ function buildEmailHTML(data) {
 </html>`;
 }
 
+function resendSend(apiKey, to, subject, html) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      from: 'Migros B2B Rapor <onboarding@resend.dev>',
+      to: [to],
+      subject,
+      html,
+    });
+    const req = https.request({
+      hostname: 'api.resend.com', port: 443,
+      path: '/emails', method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+      timeout: 30000,
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        try {
+          const r = JSON.parse(d);
+          if (res.statusCode >= 200 && res.statusCode < 300) resolve(r);
+          else reject(new Error(r.message || JSON.stringify(r)));
+        } catch(e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Resend API timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
 async function sendDailyReport() {
   if (!CONFIG.RESEND_API_KEY || !CONFIG.EMAIL_TO) {
     console.log('⚠️  Email env var eksik (RESEND_API_KEY, EMAIL_TO), mail atlanıyor');
@@ -444,17 +495,7 @@ async function sendDailyReport() {
     const date = trYesterday();
     const data = await buildEmailData(date);
     const html = buildEmailHTML(data);
-
-    const resend = new Resend(CONFIG.RESEND_API_KEY);
-    const { error } = await resend.emails.send({
-      from: 'Migros B2B Rapor <onboarding@resend.dev>',
-      to: CONFIG.EMAIL_TO,
-      subject: `Migros Günlük Rapor · ${formatDateTR(date)}`,
-      html,
-    });
-
-    if (error) throw new Error(JSON.stringify(error));
-
+    await resendSend(CONFIG.RESEND_API_KEY, CONFIG.EMAIL_TO, `Migros Günlük Rapor · ${formatDateTR(date)}`, html);
     console.log(`✅ Günlük rapor maili gönderildi → ${CONFIG.EMAIL_TO}`);
     await logToDb('Email', 'BAŞARILI', 0, `Günlük rapor gönderildi: ${date}`);
   } catch(e) {
