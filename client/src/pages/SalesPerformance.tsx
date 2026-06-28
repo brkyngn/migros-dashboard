@@ -8,9 +8,9 @@ import DataTable from '../components/common/DataTable';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
 const PERIODS = [
-  { label: 'Son 7 gün', days: 7 },
-  { label: 'Son 30 gün', days: 30 },
-  { label: 'Son 90 gün', days: 90 },
+  { label: '7 gün', days: 7 },
+  { label: '30 gün', days: 30 },
+  { label: '90 gün', days: 90 },
   { label: 'Tümü', days: 0 },
 ];
 
@@ -19,26 +19,47 @@ export default function SalesPerformance() {
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState(30);
   const [skuFilter, setSkuFilter] = useState('all');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const isCustom = !!(customStart && customEnd);
 
   useEffect(() => {
     fetchDailySales().then(setAll).finally(() => setLoading(false));
   }, []);
 
+  // En erken / en geç tarih (input min/max için)
+  const dateRange = useMemo(() => {
+    if (!all.length) return { min: '', max: '' };
+    const dates = all.map(s => s.DateTransaction.slice(0, 10)).sort();
+    return { min: dates[0], max: dates[dates.length - 1] };
+  }, [all]);
+
   const sales = useMemo(() => {
     let d = all;
-    if (period > 0) {
+    if (isCustom) {
+      d = d.filter(s => {
+        const date = s.DateTransaction.slice(0, 10);
+        return date >= customStart && date <= customEnd;
+      });
+    } else if (period > 0) {
       const cutoff = new Date(Date.now() - period * 86400000).toISOString().slice(0, 10);
       d = d.filter(s => s.DateTransaction.slice(0, 10) >= cutoff);
     }
     if (skuFilter !== 'all') d = d.filter(s => s.SupplierItemNumber === skuFilter);
     return d;
-  }, [all, period, skuFilter]);
+  }, [all, period, skuFilter, customStart, customEnd, isCustom]);
 
   if (loading) return <div className="p-8"><LoadingSkeleton rows={8} /></div>;
 
   const products = groupByProduct(sales);
   const dailyData = groupByDay(sales);
   const dowData = groupByDayOfWeek(sales);
+
+  // Toplam istatistikler
+  const totalQty  = products.reduce((s, p) => s + p.quantity, 0);
+  const totalRev  = products.reduce((s, p) => s + p.revenue, 0);
+  const totalStores = new Set(sales.map(s => s.StoreNumber)).size;
+  const totalAvgPrice = totalQty > 0 ? totalRev / totalQty : 0;
 
   // Top stores
   const storeMap: Record<string, { store: string; [key: string]: number | string }> = {};
@@ -51,7 +72,7 @@ export default function SalesPerformance() {
   const topStores = Object.values(storeMap).sort((a, b) => (b.totalRev as number) - (a.totalRev as number)).slice(0, 20);
   const maxStoreQty = topStores[0] ? (topStores[0].totalQty as number) : 1;
 
-  // Periodic analysis (1-10, 11-20, 21+)
+  // Periodic analysis
   const periods3 = [
     { label: '1–10', from: 1, to: 10 },
     { label: '11–20', from: 11, to: 20 },
@@ -63,23 +84,57 @@ export default function SalesPerformance() {
       const day = raw.getUTCDate();
       return day >= p.from && day <= p.to;
     });
-    return { ...p, qty: filtered.reduce((s, r) => s + (parseFloat(r.QuantitySold) || 0), 0), rev: filtered.reduce((s, r) => s + (parseFloat(r.NetSalesValue) || 0), 0) };
+    return {
+      ...p,
+      qty: filtered.reduce((s, r) => s + (parseFloat(r.QuantitySold) || 0), 0),
+      rev: filtered.reduce((s, r) => s + (parseFloat(r.NetSalesValue) || 0), 0),
+    };
   });
   const maxRev = Math.max(...periods3.map(p => p.rev));
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6">
+
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
+        {/* Hızlı dönem butonları */}
         <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
           {PERIODS.map(p => (
-            <button key={p.days} onClick={() => setPeriod(p.days)}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${period === p.days ? 'bg-sidebar text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+            <button key={p.days} onClick={() => { setPeriod(p.days); setCustomStart(''); setCustomEnd(''); }}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${!isCustom && period === p.days ? 'bg-sidebar text-white' : 'text-gray-600 hover:bg-gray-50'}`}
             >{p.label}</button>
           ))}
         </div>
+
+        {/* Özel aralık */}
+        <div className={`flex items-center gap-2 bg-white border rounded-lg px-3 py-1.5 transition-colors ${isCustom ? 'border-sidebar ring-1 ring-sidebar/20' : 'border-gray-200'}`}>
+          <span className="text-xs text-gray-400 font-medium whitespace-nowrap">Özel:</span>
+          <input
+            type="date"
+            value={customStart}
+            min={dateRange.min}
+            max={customEnd || dateRange.max}
+            onChange={e => setCustomStart(e.target.value)}
+            className="text-sm text-gray-700 outline-none bg-transparent"
+          />
+          <span className="text-gray-300">—</span>
+          <input
+            type="date"
+            value={customEnd}
+            min={customStart || dateRange.min}
+            max={dateRange.max}
+            onChange={e => setCustomEnd(e.target.value)}
+            className="text-sm text-gray-700 outline-none bg-transparent"
+          />
+          {isCustom && (
+            <button onClick={() => { setCustomStart(''); setCustomEnd(''); }}
+              className="text-gray-400 hover:text-gray-600 text-xs ml-1">✕</button>
+          )}
+        </div>
+
+        {/* SKU filtresi */}
         <select value={skuFilter} onChange={e => setSkuFilter(e.target.value)}
-          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none">
+          className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none ml-auto">
           <option value="all">Tüm Ürünler</option>
           {PRODUCTS.map(p => <option key={p.sku} value={p.sku}>{p.name}</option>)}
         </select>
@@ -102,12 +157,51 @@ export default function SalesPerformance() {
         </ResponsiveContainer>
       </div>
 
-      {/* Product cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Toplam + SKU kartları */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+        {/* Toplam kartı */}
+        <div className="bg-white rounded-xl border-2 border-gray-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100" style={{ borderBottom: '3px solid #16a34a' }}>
+            <div className="text-xs font-bold tracking-wide uppercase px-2 py-1 rounded-full inline-block mb-2"
+              style={{ background: '#16a34a18', color: '#16a34a' }}>
+              Toplam
+            </div>
+            <div className="font-semibold text-gray-800">Tüm Ürünler</div>
+          </div>
+          <div className="grid grid-cols-3 gap-0 divide-x divide-gray-100 p-4">
+            {[
+              { label: 'Satış Adedi', value: formatNum(Math.round(totalQty)), color: '#16a34a' },
+              { label: 'Net Ciro',    value: formatTL(totalRev) },
+              { label: 'Ort. Fiyat', value: formatTL(totalAvgPrice) },
+              { label: 'Mağaza',     value: formatNum(totalStores) },
+              { label: 'AC Payı',    value: formatPct(totalQty > 0 ? (products.find(p => p.sku === SKU_AC)?.quantity || 0) / totalQty * 100 : 0) },
+              { label: 'MB Payı',    value: formatPct(totalQty > 0 ? (products.find(p => p.sku === SKU_MB)?.quantity || 0) / totalQty * 100 : 0) },
+            ].map((item, i) => (
+              <div key={i} className="px-3 py-2">
+                <div className="text-xs text-gray-400 mb-1">{item.label}</div>
+                <div className="font-bold text-base" style={item.color ? { color: item.color } : {}}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+          <div className="px-5 pb-4">
+            <div className="flex justify-between text-xs text-gray-400 mb-1">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-ac inline-block" />AC</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-mb inline-block" />MB</span>
+            </div>
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden flex">
+              <div className="h-full" style={{ width: `${totalQty > 0 ? (products.find(p => p.sku === SKU_AC)?.quantity || 0) / totalQty * 100 : 50}%`, background: '#C0392B' }} />
+              <div className="h-full flex-1" style={{ background: '#1A3A5C' }} />
+            </div>
+          </div>
+        </div>
+
+        {/* SKU kartları */}
         {products.map(p => (
           <div key={p.sku} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-100">
-              <div className="text-xs font-bold tracking-wide uppercase px-2 py-1 rounded-full inline-block mb-2" style={{ background: p.color + '18', color: p.color }}>
+              <div className="text-xs font-bold tracking-wide uppercase px-2 py-1 rounded-full inline-block mb-2"
+                style={{ background: p.color + '18', color: p.color }}>
                 SKU · {p.sku}
               </div>
               <div className="font-semibold text-gray-800">{p.name}</div>
