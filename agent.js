@@ -1,5 +1,6 @@
 const https = require('https');
 const { Pool } = require('pg');
+const { buildEmailData, buildEmailHTML, resendSend, formatDateTR } = require('./emailReport');
 require('dotenv').config();
 
 // Türkiye saatine göre tarih hesapla (UTC+3)
@@ -26,24 +27,6 @@ function normalizeDateStr(val) {
   return s.slice(0, 10);
 }
 
-// Tarihi Türkçe biçimlendir
-function formatDateTR(d) {
-  if (!d) return '';
-  const months = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
-  const [y, m, day] = d.split('-');
-  return `${parseInt(day)} ${months[parseInt(m)]} ${y}`;
-}
-
-function formatTL(n) {
-  return '₺' + Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-function formatNum(n) {
-  return Number(n || 0).toLocaleString('tr-TR');
-}
-
-const SKU_AC = '41075315';
-const SKU_MB = '41075312';
-const SKU_NAMES = { [SKU_AC]: 'Active Carbon 5L', [SKU_MB]: 'Marseille Breeze 5L' };
 
 const CONFIG = {
   USERNAME:  process.env.MIGROS_USERNAME,
@@ -282,221 +265,18 @@ async function runStok() {
 
 // ─── EMAIL ───────────────────────────────────────────────────────────────────
 
-async function buildEmailData(date) {
-  // Satış verileri
-  const satisRes = await pool.query(`
-    SELECT
-      "SupplierItemNumber" AS sku,
-      SUM(CAST("QuantitySold" AS FLOAT))   AS total_qty,
-      SUM(CAST("NetSalesValue" AS FLOAT))  AS total_rev,
-      COUNT(DISTINCT "StoreNumber")        AS store_count
-    FROM gunluk_satis
-    WHERE "DateTransaction" = $1
-    GROUP BY "SupplierItemNumber"
-  `, [date]);
-
-  const satisToplam = satisRes.rows.reduce((a, r) => ({
-    qty: a.qty + parseFloat(r.total_qty || 0),
-    rev: a.rev + parseFloat(r.total_rev || 0),
-  }), { qty: 0, rev: 0 });
-
-  const satisBySku = {};
-  satisRes.rows.forEach(r => { satisBySku[r.sku] = r; });
-
-  // Stok kolonlarını bul (SATICI_URUN_KODU veya URUN_SATICI_ADI'ndan SKU eşle)
-  let stokBySku = {};
-  let sifirMagazaCount = 0;
-  try {
-    const stokCols = await pool.query(`
-      SELECT column_name FROM information_schema.columns
-      WHERE table_name = 'stok'
-    `);
-    const cols = stokCols.rows.map(r => r.column_name);
-
-    const skuCol   = cols.includes('SATICI_URUN_KODU') ? '"SATICI_URUN_KODU"'
-                   : cols.includes('URUN_SATICI_ADI')  ? '"URUN_SATICI_ADI"'
-                   : null;
-    const qtyCol   = cols.includes('STOK_MIKTARI')    ? '"STOK_MIKTARI"'    : null;
-    const storeCol = cols.includes('MAGAZA_NO')        ? '"MAGAZA_NO"'
-                   : cols.includes('StoreNumber')      ? '"StoreNumber"'     : null;
-
-    if (skuCol && qtyCol && storeCol) {
-      const stokRes = await pool.query(`
-        SELECT
-          ${skuCol}                                             AS sku,
-          SUM(CAST(${qtyCol} AS FLOAT))                        AS total_stok,
-          COUNT(DISTINCT ${storeCol})                          AS magaza_count,
-          COUNT(DISTINCT CASE WHEN CAST(${qtyCol} AS FLOAT) = 0 THEN ${storeCol} END) AS sifir_magaza
-        FROM stok
-        WHERE veri_tarihi = $1
-          AND ${skuCol} IN ($2, $3)
-        GROUP BY ${skuCol}
-      `, [date, SKU_AC, SKU_MB]);
-      stokRes.rows.forEach(r => { stokBySku[r.sku] = r; });
-
-      // Hiç stok olmayan mağaza: tüm SKU'lar için stok = 0 olan mağazalar
-      if (storeCol) {
-        const sifirRes = await pool.query(`
-          SELECT ${storeCol} AS magaza
-          FROM stok
-          WHERE veri_tarihi = $1
-            AND ${skuCol} IN ($2, $3)
-          GROUP BY ${storeCol}
-          HAVING MAX(CAST(${qtyCol} AS FLOAT)) = 0
-        `, [date, SKU_AC, SKU_MB]);
-        sifirMagazaCount = sifirRes.rowCount;
-      }
-    }
-  } catch(e) {
-    console.error('⚠️ Stok verisi çekilemedi (email):', e.message);
-  }
-
-  return { date, satisBySku, satisToplam, stokBySku, sifirMagazaCount };
-}
-
-function buildEmailHTML(data) {
-  const { date, satisBySku, satisToplam, stokBySku, sifirMagazaCount } = data;
-  const dateTR = formatDateTR(date);
-
-  const skuRows = [SKU_AC, SKU_MB].map(sku => {
-    const s = satisBySku[sku] || {};
-    const st = stokBySku[sku] || {};
-    const qty   = parseFloat(s.total_qty  || 0);
-    const rev   = parseFloat(s.total_rev  || 0);
-    const stores = parseInt(s.store_count || 0);
-    const stok  = parseFloat(st.total_stok || 0);
-    const sifir = parseInt(st.sifir_magaza || 0);
-    const totalMagaza = parseInt(st.magaza_count || 0);
-    return `
-      <tr>
-        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;font-weight:600;color:#1a3a5c">${SKU_NAMES[sku]}</td>
-        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right">${formatNum(Math.round(qty))}</td>
-        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right">${formatTL(rev)}</td>
-        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right">${stores}</td>
-        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right">${formatNum(Math.round(stok))}</td>
-        <td style="padding:10px 14px;border-bottom:1px solid #f0f0f0;text-align:right;color:${sifir > 0 ? '#dc2626' : '#16a34a'}">${sifir} / ${totalMagaza}</td>
-      </tr>`;
-  }).join('');
-
-  return `<!DOCTYPE html>
-<html lang="tr">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f4f6f9;font-family:Arial,Helvetica,sans-serif;color:#374151">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f9;padding:32px 0">
-    <tr><td align="center">
-      <table width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)">
-
-        <!-- Header -->
-        <tr><td style="background:linear-gradient(135deg,#1a3a5c 0%,#c0392b 100%);padding:28px 32px">
-          <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:rgba(255,255,255,.7);text-transform:uppercase;margin-bottom:6px">Migros B2B · Günlük Rapor</div>
-          <div style="font-size:26px;font-weight:800;color:#ffffff">${dateTR}</div>
-          <div style="font-size:12px;color:rgba(255,255,255,.6);margin-top:4px">Satış ve Stok Özeti</div>
-        </td></tr>
-
-        <!-- KPI Kutuları -->
-        <tr><td style="padding:24px 32px 8px">
-          <table width="100%" cellpadding="0" cellspacing="0">
-            <tr>
-              <td width="33%" style="text-align:center;padding:16px;background:#f9fafb;border-radius:8px">
-                <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Toplam Satış</div>
-                <div style="font-size:28px;font-weight:800;color:#c0392b">${formatNum(Math.round(satisToplam.qty))}</div>
-                <div style="font-size:11px;color:#9ca3af;margin-top:2px">adet</div>
-              </td>
-              <td width="4%"></td>
-              <td width="33%" style="text-align:center;padding:16px;background:#f9fafb;border-radius:8px">
-                <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Net Ciro</div>
-                <div style="font-size:28px;font-weight:800;color:#16a34a">${formatTL(satisToplam.rev)}</div>
-                <div style="font-size:11px;color:#9ca3af;margin-top:2px">TL</div>
-              </td>
-              <td width="4%"></td>
-              <td width="33%" style="text-align:center;padding:16px;background:#f9fafb;border-radius:8px">
-                <div style="font-size:11px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Stoksuz Mağaza</div>
-                <div style="font-size:28px;font-weight:800;color:${sifirMagazaCount > 0 ? '#dc2626' : '#16a34a'}">${sifirMagazaCount}</div>
-                <div style="font-size:11px;color:#9ca3af;margin-top:2px">mağaza</div>
-              </td>
-            </tr>
-          </table>
-        </td></tr>
-
-        <!-- Tablo Başlık -->
-        <tr><td style="padding:24px 32px 8px">
-          <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px">SKU Bazlı Detay</div>
-          <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px">
-            <thead>
-              <tr style="background:#f3f4f6">
-                <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Ürün</th>
-                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Adet</th>
-                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Ciro</th>
-                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Mağaza</th>
-                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">Stok</th>
-                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px">0 Stok/Top</th>
-              </tr>
-            </thead>
-            <tbody>${skuRows}</tbody>
-          </table>
-        </td></tr>
-
-        <!-- Footer -->
-        <tr><td style="padding:20px 32px 28px;border-top:1px solid #f0f0f0;margin-top:8px">
-          <div style="font-size:11px;color:#9ca3af;text-align:center">
-            Bu rapor Migros B2B agent tarafından otomatik oluşturulmuştur · ${new Date().toLocaleString('tr-TR')}
-          </div>
-        </td></tr>
-
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}
-
-function resendSend(apiKey, to, subject, html) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      from: `Migros B2B Rapor <${CONFIG.EMAIL_FROM}>`,
-      to: to.split(',').map(e => e.trim()).filter(Boolean),
-      subject,
-      html,
-    });
-    const req = https.request({
-      hostname: 'api.resend.com', port: 443,
-      path: '/emails', method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-      },
-      timeout: 30000,
-    }, res => {
-      let d = '';
-      res.on('data', c => d += c);
-      res.on('end', () => {
-        try {
-          const r = JSON.parse(d);
-          if (res.statusCode >= 200 && res.statusCode < 300) resolve(r);
-          else reject(new Error(r.message || JSON.stringify(r)));
-        } catch(e) { reject(e); }
-      });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('Resend API timeout')); });
-    req.write(body);
-    req.end();
-  });
-}
-
 async function sendDailyReport() {
   if (!CONFIG.RESEND_API_KEY || !CONFIG.EMAIL_TO) {
     console.log('⚠️  Email env var eksik (RESEND_API_KEY, EMAIL_TO), mail atlanıyor');
     return;
   }
-
   console.log('\n📧 Günlük rapor maili hazırlanıyor...');
   try {
     const date = trYesterday();
-    const data = await buildEmailData(date);
+    const data = await buildEmailData(pool, date);
     const html = buildEmailHTML(data);
-    await resendSend(CONFIG.RESEND_API_KEY, CONFIG.EMAIL_TO, `Migros Günlük Rapor · ${formatDateTR(date)}`, html);
+    await resendSend(CONFIG.RESEND_API_KEY, CONFIG.EMAIL_FROM, CONFIG.EMAIL_TO,
+      `Migros Günlük Rapor · ${formatDateTR(date)}`, html);
     console.log(`✅ Günlük rapor maili gönderildi → ${CONFIG.EMAIL_TO}`);
     await logToDb('Email', 'BAŞARILI', 0, `Günlük rapor gönderildi: ${date}`);
   } catch(e) {
