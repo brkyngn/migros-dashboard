@@ -84,8 +84,10 @@ async function buildEmailData(pool, date) {
       const skuCol   = cols.includes('SATICI_URUN_KODU') ? '"SATICI_URUN_KODU"'
                      : cols.includes('URUN_SATICI_ADI')  ? '"URUN_SATICI_ADI"' : null;
       const qtyCol   = cols.includes('STOK_MIKTARI')     ? '"STOK_MIKTARI"'    : null;
-      const storeCol = cols.includes('MAGAZA_NO')         ? '"MAGAZA_NO"'
-                     : cols.includes('StoreNumber')       ? '"StoreNumber"'     : null;
+      const storeCol = cols.includes('MAGAZA_NO')              ? '"MAGAZA_NO"'
+                     : cols.includes('StoreNumber')            ? '"StoreNumber"'
+                     : cols.includes('TESLIM_NOKTASI_ID')      ? '"TESLIM_NOKTASI_ID"'
+                     : cols.includes('TESLIM_NOKTASI_ACIKLAMA') ? '"TESLIM_NOKTASI_ACIKLAMA"' : null;
 
       if (skuCol && qtyCol && storeCol) {
         const stokRes = await pool.query(`
