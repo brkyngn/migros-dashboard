@@ -543,6 +543,17 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Dat
 
 // ========== EMAIL ==========
 
+app.get('/api/debug/stok-schema', async (req, res) => {
+  try {
+    const colRes = await pool.query(`
+      SELECT column_name, data_type FROM information_schema.columns
+      WHERE table_name = 'stok' ORDER BY ordinal_position
+    `);
+    const sample = await pool.query(`SELECT * FROM stok LIMIT 1`);
+    res.json({ columns: colRes.rows, sample: sample.rows[0] || null });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/trigger-email', async (req, res) => {
   const apiKey   = process.env.RESEND_API_KEY;
   const emailTo  = process.env.EMAIL_TO;
