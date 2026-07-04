@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const { Pool } = require('pg');
 const { buildEmailData, buildEmailHTML, resendSend, formatDateTR } = require('./emailReport');
+const { financeRoutes, initializeFinanceTables } = require('./financeRoutes');
 require('dotenv').config();
 
 const app = express();
@@ -45,6 +46,9 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
+
+// Finans (P&L) modülü endpoint'leri — SPA fallback'ten önce kayıtlı olmalı
+app.use('/api', financeRoutes(pool));
 
 let token = '';
 let connectionCodeRaw = '';
@@ -660,6 +664,7 @@ function analyzeGunlukSatis(data) {
 async function startServer() {
   try {
     await initializeDatabase();
+    await initializeFinanceTables(pool);
     // Login'i arka planda yap — başlamayı bloklama
     loginMigros().then(ok => {
       if (ok) console.log('✅ Migros login başarılı');

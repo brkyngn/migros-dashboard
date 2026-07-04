@@ -24,3 +24,6 @@ pids/
 *.pid
 client/node_modules
 client/dist
+
+# Claude Code local config
+.claude/

@@ -4,3 +4,10 @@
 @tailwind utilities;
 
 body { background-color: #F5F2EC; font-family: 'DM Sans', sans-serif; }
+
+/* P&L yazdırma görünümü: sidebar ve header gizlenir */
+@media print {
+  aside { display: none !important; }
+  body { background: white; }
+  .sticky { position: static !important; }
+}

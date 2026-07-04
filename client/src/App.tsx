@@ -9,6 +9,9 @@ import Reports from './pages/Reports';
 import DailyReport from './pages/DailyReport';
 import DailyStock from './pages/DailyStock';
 import StockComparison from './pages/StockComparison';
+import Expenses from './pages/Expenses';
+import ProfitLoss from './pages/ProfitLoss';
+import FinanceSettings from './pages/FinanceSettings';
 import type { Page } from './types';
 
 export default function App() {
@@ -53,6 +56,9 @@ export default function App() {
           {page === 'stock-comparison' && <StockComparison />}
           {page === 'turnover'      && <TurnoverAnalysis />}
           {page === 'reports'       && <Reports />}
+          {page === 'expenses'         && <Expenses />}
+          {page === 'pnl'              && <ProfitLoss />}
+          {page === 'finance-settings' && <FinanceSettings />}
         </main>
       </div>
     </div>

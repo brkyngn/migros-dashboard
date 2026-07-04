@@ -7,6 +7,9 @@ const TITLES: Record<string, string> = {
   'stock-alerts': 'Stok Uyarıları',
   turnover: 'Devir Hızı',
   reports: 'Raporlar',
+  expenses: 'Giderler',
+  pnl: 'Kâr / Zarar',
+  'finance-settings': 'Finans Ayarları',
 };
 
 interface Props { page: string; lastUpdate?: string; onMenuClick?: () => void; }
