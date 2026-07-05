@@ -22,6 +22,8 @@ const NAV_GROUPS: NavGroup[] = [
     id: 'finans', icon: '💰', label: 'Finans',
     items: [
       { id: 'expenses',         icon: '🧾', label: 'Giderler' },
+      { id: 'banka',            icon: '🏦', label: 'Banka' },
+      { id: 'cari',             icon: '👥', label: 'Cari Hesaplar' },
       { id: 'pnl',              icon: '📉', label: 'Kâr / Zarar' },
       { id: 'finance-settings', icon: '⚙️', label: 'Finans Ayarları' },
     ],

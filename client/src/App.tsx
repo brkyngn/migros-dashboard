@@ -12,6 +12,8 @@ import StockComparison from './pages/StockComparison';
 import Expenses from './pages/Expenses';
 import ProfitLoss from './pages/ProfitLoss';
 import FinanceSettings from './pages/FinanceSettings';
+import Banka from './pages/Banka';
+import Cari from './pages/Cari';
 import type { Page } from './types';
 
 export default function App() {
@@ -57,6 +59,8 @@ export default function App() {
           {page === 'turnover'      && <TurnoverAnalysis />}
           {page === 'reports'       && <Reports />}
           {page === 'expenses'         && <Expenses />}
+          {page === 'banka'            && <Banka />}
+          {page === 'cari'             && <Cari />}
           {page === 'pnl'              && <ProfitLoss />}
           {page === 'finance-settings' && <FinanceSettings />}
         </main>

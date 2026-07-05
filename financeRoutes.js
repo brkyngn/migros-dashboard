@@ -3,6 +3,30 @@
 const express = require('express');
 const multer = require('multer');
 const { parseInvoice, InvoiceAIError } = require('./invoiceAI');
+const { parseBankStatement } = require('./bankParser');
+
+// Excel (banka ekstresi) upload — bellek depolama, 10MB, .xls/.xlsx
+const uploadExcel = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const okExt = /\.(xls|xlsx)$/i.test(file.originalname || '');
+    if (okExt) cb(null, true);
+    else cb(new Error('UNSUPPORTED_TYPE'));
+  },
+});
+
+// Tedarikçi adından cari hesap bul/oluştur ve id döndür
+async function findOrCreateCari(pool, ad) {
+  const t = (ad || '').trim();
+  if (!t) return null;
+  const found = await pool.query(`SELECT id FROM cari_accounts WHERE LOWER(ad) = LOWER($1) LIMIT 1`, [t]);
+  if (found.rows.length) return found.rows[0].id;
+  const ins = await pool.query(`INSERT INTO cari_accounts (ad) VALUES ($1) ON CONFLICT DO NOTHING RETURNING id`, [t]);
+  if (ins.rows.length) return ins.rows[0].id;
+  const again = await pool.query(`SELECT id FROM cari_accounts WHERE LOWER(ad) = LOWER($1) LIMIT 1`, [t]);
+  return again.rows.length ? again.rows[0].id : null;
+}
 
 // Fatura upload: bellek depolama (dosya diske hiç yazılmaz), 15MB sınır, tip whitelist'i
 const ALLOWED_MIMES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
@@ -93,6 +117,62 @@ async function initializeFinanceTables(pool) {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // --- Cari hesaplar (tedarikçi/kişi bazlı) ---
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cari_accounts (
+      id SERIAL PRIMARY KEY,
+      ad TEXT NOT NULL,
+      vkn TEXT,
+      iban TEXT,
+      notlar TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS cari_ad_lower_uniq ON cari_accounts (LOWER(ad))`).catch(() => {});
+
+  // expenses.cari_id (giderleri cari hesaba bağla)
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS cari_id INTEGER REFERENCES cari_accounts(id)`).catch(() => {});
+
+  // --- Banka hesapları + hareketleri ---
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bank_accounts (
+      id SERIAL PRIMARY KEY,
+      iban TEXT UNIQUE NOT NULL,
+      unvan TEXT, vkn TEXT, hesap_adi TEXT, sube TEXT, banka_adi TEXT,
+      devreden_bakiye NUMERIC,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bank_transactions (
+      id SERIAL PRIMARY KEY,
+      bank_account_id INTEGER REFERENCES bank_accounts(id) ON DELETE CASCADE,
+      islem_tarihi DATE, valor_tarihi DATE,
+      kanal TEXT, yon TEXT, aciklama TEXT,
+      tutar NUMERIC, bakiye NUMERIC,
+      fis_no TEXT, fis_aciklama TEXT, karsi_taraf TEXT,
+      cari_id INTEGER REFERENCES cari_accounts(id),
+      satir_hash TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS bank_tx_uniq ON bank_transactions (bank_account_id, satir_hash)`).catch(() => {});
+
+  // Mevcut giderlerdeki tedarikçileri cari hesaplara backfill et + bağla (idempotent)
+  await pool.query(`
+    INSERT INTO cari_accounts (ad)
+    SELECT DISTINCT TRIM(tedarikci) FROM expenses
+    WHERE tedarikci IS NOT NULL AND TRIM(tedarikci) <> ''
+      AND LOWER(TRIM(tedarikci)) NOT IN (SELECT LOWER(ad) FROM cari_accounts)
+    ON CONFLICT DO NOTHING
+  `).catch(() => {});
+  await pool.query(`
+    UPDATE expenses e SET cari_id = c.id
+    FROM cari_accounts c
+    WHERE e.cari_id IS NULL AND e.tedarikci IS NOT NULL
+      AND LOWER(TRIM(e.tedarikci)) = LOWER(c.ad)
+  `).catch(() => {});
 
   // --- Seed (idempotent) ---
   await pool.query(`
@@ -312,12 +392,13 @@ function financeRoutes(pool) {
       const kdvOrani = parseFloat(b.kdv_orani) || 0;
       const kdvTutari = Math.round(net * kdvOrani) / 100;
       const brut = net + kdvTutari;
+      const cariId = b.tedarikci ? await findOrCreateCari(pool, b.tedarikci) : null;
       const r = await pool.query(`
-        INSERT INTO expenses (tarih, tedarikci, alici, kategori_id, aciklama, net_tutar, kdv_orani, kdv_tutari, brut_tutar, urun_id, adet, kaynak, fatura_no)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *
+        INSERT INTO expenses (tarih, tedarikci, alici, kategori_id, aciklama, net_tutar, kdv_orani, kdv_tutari, brut_tutar, urun_id, adet, kaynak, fatura_no, cari_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *
       `, [b.tarih, b.tedarikci || null, b.alici || null, b.kategori_id, b.aciklama || null,
           net, kdvOrani, kdvTutari, brut, b.urun_id || null, b.adet || null,
-          b.kaynak === 'fatura_ai' ? 'fatura_ai' : 'manuel', b.fatura_no || null]);
+          b.kaynak === 'fatura_ai' ? 'fatura_ai' : 'manuel', b.fatura_no || null, cariId]);
       res.json(mapExpense(r.rows[0]));
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -330,15 +411,16 @@ function financeRoutes(pool) {
       const kdvOrani = parseFloat(b.kdv_orani) || 0;
       const kdvTutari = Math.round(net * kdvOrani) / 100;
       const brut = net + kdvTutari;
+      const cariId = b.tedarikci ? await findOrCreateCari(pool, b.tedarikci) : null;
       const r = await pool.query(`
         UPDATE expenses SET
           tarih = COALESCE($1, tarih), tedarikci = $2, alici = $3,
           kategori_id = COALESCE($4, kategori_id), aciklama = $5,
           net_tutar = $6, kdv_orani = $7, kdv_tutari = $8, brut_tutar = $9,
-          urun_id = $10, adet = $11, fatura_no = $12
-        WHERE id = $13 RETURNING *
+          urun_id = $10, adet = $11, fatura_no = $12, cari_id = $13
+        WHERE id = $14 RETURNING *
       `, [b.tarih, b.tedarikci || null, b.alici || null, b.kategori_id, b.aciklama || null,
-          net, kdvOrani, kdvTutari, brut, b.urun_id || null, b.adet || null, b.fatura_no || null, req.params.id]);
+          net, kdvOrani, kdvTutari, brut, b.urun_id || null, b.adet || null, b.fatura_no || null, cariId, req.params.id]);
       if (!r.rows.length) return res.status(404).json({ error: 'gider bulunamadı' });
       res.json(mapExpense(r.rows[0]));
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -696,6 +778,195 @@ function financeRoutes(pool) {
         res.status(500).json({ error: e.message });
       }
     });
+  });
+
+  // ========== BANKA ==========
+
+  // Ekstre yükle: parse et, hesabı upsert et, hareketleri mükerrer olmadan ekle
+  router.post('/banka/yukle', (req, res) => {
+    uploadExcel.single('file')(req, res, async (err) => {
+      if (err) {
+        if (err.message === 'UNSUPPORTED_TYPE') return res.status(415).json({ error: 'Sadece .xls veya .xlsx dosyası yükleyin.' });
+        if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Dosya çok büyük — en fazla 10 MB.' });
+        return res.status(400).json({ error: err.message });
+      }
+      if (!req.file) return res.status(400).json({ error: 'Dosya yüklenmedi.' });
+
+      let parsed;
+      try {
+        parsed = parseBankStatement(req.file.buffer);
+      } catch (e) {
+        return res.status(422).json({ error: e.message });
+      }
+      const { account, transactions } = parsed;
+
+      try {
+        // Hesabı upsert et (IBAN benzersiz)
+        const accRes = await pool.query(`
+          INSERT INTO bank_accounts (iban, unvan, vkn, hesap_adi, sube, banka_adi, devreden_bakiye)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)
+          ON CONFLICT (iban) DO UPDATE SET
+            unvan = COALESCE(EXCLUDED.unvan, bank_accounts.unvan),
+            hesap_adi = COALESCE(EXCLUDED.hesap_adi, bank_accounts.hesap_adi),
+            banka_adi = COALESCE(EXCLUDED.banka_adi, bank_accounts.banka_adi)
+          RETURNING *
+        `, [account.iban, account.unvan, account.vkn, account.hesap_adi, account.sube, account.banka_adi, account.devreden_bakiye]);
+        const bankAccountId = accRes.rows[0].id;
+
+        // Karşı tarafı cari ile otomatik eşle (varsa) — yoksa null bırak
+        let eklenen = 0, mukerrer = 0;
+        for (const t of transactions) {
+          let cariId = null;
+          if (t.karsi_taraf) {
+            const c = await pool.query(`SELECT id FROM cari_accounts WHERE LOWER(ad) = LOWER($1) LIMIT 1`, [t.karsi_taraf]);
+            if (c.rows.length) cariId = c.rows[0].id;
+          }
+          const ins = await pool.query(`
+            INSERT INTO bank_transactions
+              (bank_account_id, islem_tarihi, valor_tarihi, kanal, yon, aciklama, tutar, bakiye, fis_no, fis_aciklama, karsi_taraf, cari_id, satir_hash)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            ON CONFLICT (bank_account_id, satir_hash) DO NOTHING
+            RETURNING id
+          `, [bankAccountId, t.islem_tarihi, t.valor_tarihi, t.kanal, t.yon, t.aciklama, t.tutar, t.bakiye, t.fis_no, t.fis_aciklama, t.karsi_taraf, cariId, t.satir_hash]);
+          if (ins.rows.length) eklenen++; else mukerrer++;
+        }
+
+        res.json({
+          hesap: { id: bankAccountId, iban: account.iban, banka_adi: account.banka_adi, hesap_adi: account.hesap_adi },
+          eklenen, mukerrer, toplam: transactions.length,
+        });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+  });
+
+  // Banka hesapları (bakiye + hareket sayısı ile)
+  router.get('/banka/hesaplar', async (req, res) => {
+    try {
+      const r = await pool.query(`
+        SELECT a.*,
+               COUNT(t.id)::int AS hareket_sayisi,
+               MAX(t.islem_tarihi) AS son_tarih,
+               (SELECT bakiye FROM bank_transactions WHERE bank_account_id = a.id ORDER BY islem_tarihi DESC, id DESC LIMIT 1) AS son_bakiye
+        FROM bank_accounts a
+        LEFT JOIN bank_transactions t ON t.bank_account_id = a.id
+        GROUP BY a.id ORDER BY a.id
+      `);
+      res.json(r.rows.map(x => ({ ...x, devreden_bakiye: num(x.devreden_bakiye), son_bakiye: num(x.son_bakiye) })));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Banka hareketleri
+  router.get('/banka/hareketler', async (req, res) => {
+    try {
+      const { bank_account_id, from, to, yon, q, eslesmemis } = req.query;
+      const params = [];
+      let where = 'WHERE 1=1';
+      if (bank_account_id) { params.push(bank_account_id); where += ` AND t.bank_account_id = $${params.length}`; }
+      if (from) { params.push(from); where += ` AND t.islem_tarihi >= $${params.length}`; }
+      if (to) { params.push(to); where += ` AND t.islem_tarihi <= $${params.length}`; }
+      if (yon) { params.push(yon); where += ` AND t.yon = $${params.length}`; }
+      if (eslesmemis === '1') where += ` AND t.cari_id IS NULL AND t.yon = 'B'`;
+      if (q) { params.push(`%${q}%`); where += ` AND (t.aciklama ILIKE $${params.length} OR t.karsi_taraf ILIKE $${params.length} OR t.fis_no ILIKE $${params.length})`; }
+      const r = await pool.query(`
+        SELECT t.*, c.ad AS cari_ad, a.banka_adi, a.iban
+        FROM bank_transactions t
+        LEFT JOIN cari_accounts c ON c.id = t.cari_id
+        LEFT JOIN bank_accounts a ON a.id = t.bank_account_id
+        ${where}
+        ORDER BY t.islem_tarihi DESC, t.id DESC
+        LIMIT 5000
+      `, params);
+      res.json(r.rows.map(x => ({ ...x, tutar: num(x.tutar), bakiye: num(x.bakiye) })));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Bir banka hareketini cari hesaba (ödeme olarak) eşle / eşlemeyi kaldır
+  router.post('/banka/hareket/:id/cari', async (req, res) => {
+    try {
+      const { cari_id } = req.body;
+      const r = await pool.query(`UPDATE bank_transactions SET cari_id = $1 WHERE id = $2 RETURNING id`,
+        [cari_id || null, req.params.id]);
+      if (!r.rows.length) return res.status(404).json({ error: 'hareket bulunamadı' });
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.delete('/banka/hesaplar/:id', async (req, res) => {
+    try {
+      const r = await pool.query(`DELETE FROM bank_accounts WHERE id = $1 RETURNING id`, [req.params.id]);
+      if (!r.rows.length) return res.status(404).json({ error: 'hesap bulunamadı' });
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ========== CARİ HESAPLAR ==========
+
+  // Cari listesi — borç (faturalar) / ödeme (banka) / bakiye
+  router.get('/cari', async (req, res) => {
+    try {
+      await materializeRecurring(pool);
+      const r = await pool.query(`
+        SELECT c.id, c.ad, c.vkn, c.iban, c.notlar,
+          COALESCE((SELECT SUM(brut_tutar) FROM expenses WHERE cari_id = c.id), 0) AS borc,
+          COALESCE((SELECT SUM(-tutar) FROM bank_transactions WHERE cari_id = c.id), 0) AS odeme,
+          (SELECT COUNT(*)::int FROM expenses WHERE cari_id = c.id) AS fatura_sayisi,
+          (SELECT COUNT(*)::int FROM bank_transactions WHERE cari_id = c.id) AS odeme_sayisi
+        FROM cari_accounts c
+        ORDER BY c.ad
+      `);
+      res.json(r.rows.map(x => {
+        const borc = num(x.borc) || 0, odeme = num(x.odeme) || 0;
+        return { ...x, borc, odeme, bakiye: Math.round((borc - odeme) * 100) / 100 };
+      }));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Cari detay: faturalar + banka ödemeleri
+  router.get('/cari/:id', async (req, res) => {
+    try {
+      const cariRes = await pool.query(`SELECT * FROM cari_accounts WHERE id = $1`, [req.params.id]);
+      if (!cariRes.rows.length) return res.status(404).json({ error: 'cari bulunamadı' });
+      const giderler = await pool.query(`
+        SELECT e.*, cat.ad AS kategori_ad FROM expenses e
+        LEFT JOIN expense_categories cat ON cat.id = e.kategori_id
+        WHERE e.cari_id = $1 ORDER BY e.tarih DESC
+      `, [req.params.id]);
+      const odemeler = await pool.query(`
+        SELECT t.*, a.banka_adi FROM bank_transactions t
+        LEFT JOIN bank_accounts a ON a.id = t.bank_account_id
+        WHERE t.cari_id = $1 ORDER BY t.islem_tarihi DESC
+      `, [req.params.id]);
+      res.json({
+        cari: cariRes.rows[0],
+        giderler: giderler.rows.map(mapExpense),
+        odemeler: odemeler.rows.map(x => ({ ...x, tutar: num(x.tutar), bakiye: num(x.bakiye) })),
+      });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/cari', async (req, res) => {
+    try {
+      const { ad, vkn, iban, notlar } = req.body;
+      if (!ad || !ad.trim()) return res.status(400).json({ error: 'ad zorunlu' });
+      const r = await pool.query(
+        `INSERT INTO cari_accounts (ad, vkn, iban, notlar) VALUES ($1,$2,$3,$4) RETURNING *`,
+        [ad.trim(), vkn || null, iban || null, notlar || null]
+      ).catch(e => { if (e.code === '23505') return null; throw e; });
+      if (!r) return res.status(409).json({ error: 'Bu isimde bir cari zaten var.' });
+      res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.put('/cari/:id', async (req, res) => {
+    try {
+      const { ad, vkn, iban, notlar } = req.body;
+      const r = await pool.query(`
+        UPDATE cari_accounts SET ad = COALESCE($1, ad), vkn = $2, iban = $3, notlar = $4
+        WHERE id = $5 RETURNING *
+      `, [ad, vkn || null, iban || null, notlar || null, req.params.id]);
+      if (!r.rows.length) return res.status(404).json({ error: 'cari bulunamadı' });
+      res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   // Stok sermayesi: son stok × birim maliyet

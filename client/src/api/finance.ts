@@ -1,6 +1,7 @@
 import type {
   Expense, ExpenseCategory, RecurringExpense, Product,
   FinanceSettingsData, PnlWaterfall, PnlTrendRow, UnitEconomics, ParsedInvoice,
+  BankAccount, BankTransaction, BankUploadResult, CariAccount, CariDetail,
 } from '../types/finance';
 
 const BASE = '';
@@ -98,3 +99,51 @@ export const analyzeInvoice = async (file: File): Promise<ParsedInvoice> => {
   form.append('file', file);
   return j(await fetch(`${BASE}/api/fatura-analiz`, { method: 'POST', body: form }), 'Fatura analiz edilemedi');
 };
+
+// --- Banka ---
+export const uploadBankStatement = async (file: File): Promise<BankUploadResult> => {
+  const form = new FormData();
+  form.append('file', file);
+  return j(await fetch(`${BASE}/api/banka/yukle`, { method: 'POST', body: form }), 'Ekstre yüklenemedi');
+};
+
+export const fetchBankAccounts = async (): Promise<BankAccount[]> =>
+  j(await fetch(`${BASE}/api/banka/hesaplar`), 'Banka hesapları alınamadı');
+
+export const fetchBankTransactions = async (filters?: {
+  bank_account_id?: number; from?: string; to?: string; yon?: string; q?: string; eslesmemis?: boolean;
+}): Promise<BankTransaction[]> => {
+  const params = new URLSearchParams();
+  if (filters?.bank_account_id) params.set('bank_account_id', String(filters.bank_account_id));
+  if (filters?.from) params.set('from', filters.from);
+  if (filters?.to) params.set('to', filters.to);
+  if (filters?.yon) params.set('yon', filters.yon);
+  if (filters?.q) params.set('q', filters.q);
+  if (filters?.eslesmemis) params.set('eslesmemis', '1');
+  return j(await fetch(`${BASE}/api/banka/hareketler?${params}`), 'Banka hareketleri alınamadı');
+};
+
+export const assignTransactionCari = async (txId: number, cariId: number | null): Promise<void> => {
+  const res = await fetch(`${BASE}/api/banka/hareket/${txId}/cari`, {
+    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ cari_id: cariId }),
+  });
+  if (!res.ok) throw new Error('Eşleştirme yapılamadı');
+};
+
+export const deleteBankAccount = async (id: number): Promise<void> => {
+  const res = await fetch(`${BASE}/api/banka/hesaplar/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Hesap silinemedi');
+};
+
+// --- Cari hesaplar ---
+export const fetchCariAccounts = async (): Promise<CariAccount[]> =>
+  j(await fetch(`${BASE}/api/cari`), 'Cari hesaplar alınamadı');
+
+export const fetchCariDetail = async (id: number): Promise<CariDetail> =>
+  j(await fetch(`${BASE}/api/cari/${id}`), 'Cari detayı alınamadı');
+
+export const createCari = async (body: { ad: string; vkn?: string; iban?: string; notlar?: string }): Promise<CariAccount> =>
+  j(await fetch(`${BASE}/api/cari`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify(body) }), 'Cari eklenemedi');
+
+export const updateCari = async (id: number, body: { ad?: string; vkn?: string; iban?: string; notlar?: string }): Promise<CariAccount> =>
+  j(await fetch(`${BASE}/api/cari/${id}`, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(body) }), 'Cari güncellenemedi');

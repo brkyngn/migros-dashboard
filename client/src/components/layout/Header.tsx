@@ -8,6 +8,8 @@ const TITLES: Record<string, string> = {
   turnover: 'Devir Hızı',
   reports: 'Raporlar',
   expenses: 'Giderler',
+  banka: 'Banka',
+  cari: 'Cari Hesaplar',
   pnl: 'Kâr / Zarar',
   'finance-settings': 'Finans Ayarları',
 };

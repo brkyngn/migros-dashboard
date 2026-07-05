@@ -136,6 +136,65 @@ export interface InvoiceLineItem {
   kdv_orani: number;
 }
 
+export interface BankAccount {
+  id: number;
+  iban: string;
+  unvan: string | null;
+  vkn: string | null;
+  hesap_adi: string | null;
+  sube: string | null;
+  banka_adi: string | null;
+  devreden_bakiye: number | null;
+  hareket_sayisi: number;
+  son_tarih: string | null;
+  son_bakiye: number | null;
+}
+
+export interface BankTransaction {
+  id: number;
+  bank_account_id: number;
+  islem_tarihi: string;
+  valor_tarihi: string | null;
+  kanal: string | null;
+  yon: 'A' | 'B';
+  aciklama: string | null;
+  tutar: number;
+  bakiye: number | null;
+  fis_no: string | null;
+  fis_aciklama: string | null;
+  karsi_taraf: string | null;
+  cari_id: number | null;
+  cari_ad?: string | null;
+  banka_adi?: string | null;
+  iban?: string;
+}
+
+export interface BankUploadResult {
+  hesap: { id: number; iban: string; banka_adi: string | null; hesap_adi: string | null };
+  eklenen: number;
+  mukerrer: number;
+  toplam: number;
+}
+
+export interface CariAccount {
+  id: number;
+  ad: string;
+  vkn: string | null;
+  iban: string | null;
+  notlar: string | null;
+  borc: number;
+  odeme: number;
+  bakiye: number;
+  fatura_sayisi: number;
+  odeme_sayisi: number;
+}
+
+export interface CariDetail {
+  cari: { id: number; ad: string; vkn: string | null; iban: string | null; notlar: string | null };
+  giderler: Expense[];
+  odemeler: BankTransaction[];
+}
+
 export interface ParsedInvoice {
   satici: string;
   satici_vkn: string | null;

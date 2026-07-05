@@ -66,7 +66,19 @@ Imported by **both** `server.js` and `agent.js` (single source of truth — don'
 - **Recurring expenses materialize on read** (`materializeRecurring`): every `GET /api/expenses` / `GET /api/pnl` inserts missing monthly rows with `ON CONFLICT (tekrarlayan_id, donem) DO NOTHING` (partial unique index). Templates are deactivated, never deleted (FK from materialized rows).
 - P&L math lives server-side: `GET /api/pnl?from&to` (waterfall JSON), `/api/pnl/trend?months=12`, `/api/pnl/unit-economics?from&to` (per-box breakdown + breakeven), `/api/stok-sermayesi`. Sales queries CAST TEXT columns and guard with `"DateTransaction" ~ '^\d{4}-\d{2}-\d{2}'`.
 - `invoiceAI.js` — `POST /api/fatura-analiz`: multer **memoryStorage** (file never touches disk), 15MB / pdf+jpg+png+webp whitelist, Anthropic `claude-opus-4-8` with `output_config.format` json_schema (no temperature — 400s on Opus 4.8). Returns parsed JSON only; saving always goes through user-approved `POST /api/expenses`. Requires `ANTHROPIC_API_KEY`.
-- Frontend: pages `Expenses.tsx` / `ProfitLoss.tsx` / `FinanceSettings.tsx`, api client `client/src/api/finance.ts`, types `client/src/types/finance.ts`, Turkish number input parsing in `client/src/utils/money.ts` (`parseTrNumber` — comma decimal). Sidebar is grouped (Migros / Finans) with localStorage-persisted collapse state.
+- Frontend: pages `Expenses.tsx` / `ProfitLoss.tsx` / `FinanceSettings.tsx` / `Banka.tsx` / `Cari.tsx`, api client `client/src/api/finance.ts`, types `client/src/types/finance.ts`, Turkish number input parsing in `client/src/utils/money.ts` (`parseTrNumber` — comma decimal). Sidebar is grouped (Migros / Finans) with localStorage-persisted collapse state.
+
+### `bankParser.js` — banka ekstresi (Excel) ayrıştırıcı
+- `parseBankStatement(buffer)` → `{account: {iban, unvan, hesap_adi, banka_adi, devreden_bakiye}, transactions: [...]}`. Türk banka ekstresi formatı: üstte etiket(A sütunu)/değer(C sütunu) meta blok, sonra `İşlem Tarihi` başlık satırı, ardından hareketler.
+- **Türkçe karakter tuzağı:** başlık/etiket eşleştirmede `İ`/`ş`/`ı` yüzünden düz `toLowerCase` başarısız olur → `asciiKey()` (NFD + diakritik sıyırma) kullanılıyor. `toLocaleLowerCase('tr')` KULLANMA (`I`→`ı` yapar).
+- Banka adı IBAN'ın 5 haneli banka kodundan türetilir (`BANK_CODES` map). B/A = Alacak(giriş,+)/Borç(çıkış,−); `Tutar` zaten işaretli.
+- **Mükerrer önleme:** `satir_hash = sha1(iban|tarih|tutar|bakiye|fis_no|aciklama)`. `Bakiye` yürüyen bakiye olduğu için hesap içinde her satırı benzersizleştirir; unique index `(bank_account_id, satir_hash)` + `ON CONFLICT DO NOTHING` çakışan tarih aralıklı yüklemeleri güvenle atlar.
+- `extractKarsiTaraf()` açıklamadan alıcı/gönderen adını çeker (cari eşleştirme önerisi için).
+
+### Banka + Cari Hesaplar modülleri (financeRoutes.js)
+- **Banka:** `bank_accounts` (IBAN unique), `bank_transactions`. `POST /api/banka/yukle` (multer memoryStorage, .xls/.xlsx), `/api/banka/hesaplar`, `/api/banka/hareketler`, `POST /api/banka/hareket/:id/cari` (ödemeyi cariye eşle), `DELETE /api/banka/hesaplar/:id` (CASCADE).
+- **Cari:** `cari_accounts` (unique index on `LOWER(ad)`). `expenses.cari_id` FK — gider create/update'te tedarikçi adından `findOrCreateCari` ile otomatik bağlanır; `initializeFinanceTables` mevcut tedarikçileri backfill eder. `/api/cari` (borç = SUM expenses.brut, ödeme = SUM(-bank_tx.tutar), bakiye = borç−ödeme), `/api/cari/:id` (fatura + ödeme detayı), POST/PUT.
+- Banka yükleme sırasında karşı taraf mevcut bir cari adıyla eşleşirse otomatik bağlanır; eşleşmeyen çıkışlar Banka sayfasından manuel/tek-tıkla (`+ oluştur`) eşleştirilir.
 
 ### `client/` — React 19 + Vite + TypeScript + Tailwind SPA
 - Single-page app with **manual page switching via `useState`** in `App.tsx` (no router). Pages live in `client/src/pages/`.
