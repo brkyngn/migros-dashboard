@@ -67,9 +67,14 @@ export default function Banka() {
     }
   };
 
-  const onAssign = async (tx: BankTransaction, cariId: number | null) => {
-    await assignTransactionCari(tx.id, cariId);
-    setTxns(ts => ts.map(t => (t.id === tx.id ? { ...t, cari_id: cariId, cari_ad: cariId ? cariList.find(c => c.id === cariId)?.ad : null } : t)));
+  // value: '' (temizle) | 'masraf' (banka masrafı) | cari id (sayı)
+  const onSelect = async (tx: BankTransaction, value: string) => {
+    const masraf = value === 'masraf';
+    const cariId = masraf || value === '' ? null : Number(value);
+    await assignTransactionCari(tx.id, { cariId, masraf });
+    setTxns(ts => ts.map(t => (t.id === tx.id
+      ? { ...t, cari_id: cariId, banka_masrafi: masraf, cari_ad: cariId ? cariList.find(c => c.id === cariId)?.ad : null }
+      : t)));
     loadAccounts();
   };
 
@@ -79,11 +84,11 @@ export default function Banka() {
     try {
       const c = await createCari({ ad: tx.karsi_taraf });
       setCariList(list => [...list, c]);
-      await onAssign(tx, c.id);
+      await onSelect(tx, String(c.id));
     } catch {
       // İsim zaten varsa: mevcut cariyi bul ve ata
       const existing = cariList.find(c => c.ad.toLowerCase() === tx.karsi_taraf!.toLowerCase());
-      if (existing) await onAssign(tx, existing.id);
+      if (existing) await onSelect(tx, String(existing.id));
     }
   };
 
@@ -211,13 +216,15 @@ export default function Banka() {
                       {t.yon === 'B' ? (
                         <div className="flex items-center gap-1">
                           <select
-                            value={t.cari_id ?? ''}
-                            onChange={e => onAssign(t, e.target.value ? Number(e.target.value) : null)}
-                            className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white max-w-40">
+                            value={t.banka_masrafi ? 'masraf' : (t.cari_id ?? '')}
+                            onChange={e => onSelect(t, e.target.value)}
+                            className={`text-xs border rounded-lg px-2 py-1 bg-white max-w-40 ${t.banka_masrafi ? 'border-amber-300 text-amber-700' : 'border-gray-200'}`}>
                             <option value="">— Eşleştir —</option>
+                            <option value="masraf">🏦 Banka Masrafı</option>
+                            {cariList.length > 0 && <option disabled>──────────</option>}
                             {cariList.map(c => <option key={c.id} value={c.id}>{c.ad}</option>)}
                           </select>
-                          {!t.cari_id && t.karsi_taraf && (
+                          {!t.cari_id && !t.banka_masrafi && t.karsi_taraf && (
                             <button onClick={() => createAndAssign(t)} title="Karşı taraftan cari oluştur ve ata"
                               className="text-xs text-blue-600 hover:underline whitespace-nowrap">+ oluştur</button>
                           )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CariAccount, CariDetail } from '../types/finance';
-import { fetchCariAccounts, fetchCariDetail, createCari } from '../api/finance';
+import { fetchCariAccounts, fetchCariDetail, createCari, deleteCari } from '../api/finance';
 import KPICard from '../components/common/KPICard';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import { formatTLDec } from '../utils/formatters';
@@ -120,6 +120,18 @@ export default function Cari() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Eklenemedi'); }
   };
 
+  const sil = async (c: CariAccount) => {
+    const uyari = (c.fatura_sayisi > 0 || c.odeme_sayisi > 0)
+      ? `\n\nDikkat: ${c.fatura_sayisi} fatura ve ${c.odeme_sayisi} ödeme bu cariye bağlı. Silinirse bu kayıtların cari bağlantısı kaldırılır (kayıtlar silinmez).`
+      : '';
+    if (!confirm(`"${c.ad}" cari hesabı silinsin mi?${uyari}`)) return;
+    try {
+      await deleteCari(c.id);
+      if (detail?.cari.id === c.id) setDetail(null);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Silinemedi'); }
+  };
+
   const ledger = useMemo(() => (detail ? buildLedger(detail) : []), [detail]);
   const sonBakiye = ledger.length ? ledger[ledger.length - 1].bakiye : 0;
   const toplamBorc = ledger.reduce((s, r) => s + r.borc, 0);
@@ -160,6 +172,9 @@ export default function Cari() {
               </div>
               <button onClick={() => exportLedgerCsv(detail.cari.ad, ledger)}
                 className="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50">⬇ CSV</button>
+              <button
+                onClick={() => sil(list.find(x => x.id === detail.cari.id) ?? { ...detail.cari, borc: 0, odeme: 0, bakiye: 0, fatura_sayisi: detail.giderler.length, odeme_sayisi: detail.odemeler.length })}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50">🗑 Sil</button>
             </div>
 
             <div className="bg-white rounded-xl border border-gray-200 p-4 md:p-5">
@@ -275,7 +290,11 @@ export default function Cari() {
                   <td className={`px-3 py-2 text-right tabular-nums font-semibold ${c.bakiye > 0.01 ? 'text-red-600' : c.bakiye < -0.01 ? 'text-green-700' : 'text-gray-400'}`}>
                     {formatTLDec(c.bakiye)}
                   </td>
-                  <td className="px-3 py-2 text-right"><span className="text-xs text-blue-600">Ekstre →</span></td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <span className="text-xs text-blue-600 mr-3">Ekstre →</span>
+                    <button onClick={e => { e.stopPropagation(); sil(c); }}
+                      className="text-xs text-red-500 hover:text-red-700" title="Cariyi sil">🗑</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

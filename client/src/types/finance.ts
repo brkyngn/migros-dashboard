@@ -165,6 +165,7 @@ export interface BankTransaction {
   karsi_taraf: string | null;
   cari_id: number | null;
   cari_ad?: string | null;
+  banka_masrafi?: boolean;
   banka_adi?: string | null;
   iban?: string;
 }

@@ -79,6 +79,8 @@ Imported by **both** `server.js` and `agent.js` (single source of truth — don'
 - **Banka:** `bank_accounts` (IBAN unique), `bank_transactions`. `POST /api/banka/yukle` (multer memoryStorage, .xls/.xlsx), `/api/banka/hesaplar`, `/api/banka/hareketler`, `POST /api/banka/hareket/:id/cari` (ödemeyi cariye eşle), `DELETE /api/banka/hesaplar/:id` (CASCADE).
 - **Cari:** `cari_accounts` (unique index on `LOWER(ad)`). `expenses.cari_id` FK — gider create/update'te tedarikçi adından `findOrCreateCari` ile otomatik bağlanır; `initializeFinanceTables` mevcut tedarikçileri backfill eder. `/api/cari` (borç = SUM expenses.brut, ödeme = SUM(-bank_tx.tutar), bakiye = borç−ödeme), `/api/cari/:id` (fatura + ödeme detayı), POST/PUT.
 - Banka yükleme sırasında karşı taraf mevcut bir cari adıyla eşleşirse otomatik bağlanır; eşleşmeyen çıkışlar Banka sayfasından manuel/tek-tıkla (`+ oluştur`) eşleştirilir.
+- **Banka masrafı:** `bank_transactions.banka_masrafi` boolean. Eşleştirme dropdown'unda "🏦 Banka Masrafı" seçeneği (EFT ücreti/BSMV gibi). Masraf işaretli hareketler `computePnl`'de OPERASYONEL gidere eklenir (`SUM(-tutar)`); cari ödemeleri P&L'e GİRMEZ (sadece nakit hareketi, çift sayımı önlemek için — faturalar zaten accrual gider). `POST /api/banka/hareket/:id/cari` gövdesi `{cari_id, masraf}` alır (masraf=true → cari_id null).
+- **Cari silme:** `DELETE /api/cari/:id` — bağlı expenses/bank_transactions cari_id'lerini NULL yapıp cariyi siler (kayıtlar silinmez). UI'da liste satırında 🗑 ve ekstre başlığında Sil butonu.
 
 ### `client/` — React 19 + Vite + TypeScript + Tailwind SPA
 - Single-page app with **manual page switching via `useState`** in `App.tsx` (no router). Pages live in `client/src/pages/`.

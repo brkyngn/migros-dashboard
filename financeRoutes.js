@@ -158,6 +158,8 @@ async function initializeFinanceTables(pool) {
     )
   `);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS bank_tx_uniq ON bank_transactions (bank_account_id, satir_hash)`).catch(() => {});
+  // Banka masrafı işareti (EFT ücreti, BSMV vb. — cari ödemesi değil, operasyonel gider)
+  await pool.query(`ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS banka_masrafi BOOLEAN DEFAULT FALSE`).catch(() => {});
 
   // Mevcut giderlerdeki tedarikçileri cari hesaplara backfill et + bağla (idempotent)
   await pool.query(`
@@ -579,6 +581,15 @@ function financeRoutes(pool) {
       GROUP BY c.pnl_blok, c.ad
     `, [from, to]);
 
+    // Banka masrafları (EFT ücreti, BSMV vb.) — hiçbir faturada olmadığı için
+    // P&L'e yalnızca buradan girer (cari ödemeleri sadece nakit hareketidir, P&L'e girmez)
+    const bankaMasrafRes = await pool.query(`
+      SELECT COALESCE(SUM(-tutar), 0) AS masraf
+      FROM bank_transactions
+      WHERE banka_masrafi = TRUE AND islem_tarihi BETWEEN $1::date AND $2::date
+    `, [from, to]);
+    const bankaMasrafi = num(bankaMasrafRes.rows[0].masraf) || 0;
+
     // --- Satış tarafı ---
     const kdvOran = settings.satis_kdv_orani;
     let brutSatis = 0, satisKdv = 0, netSatis = 0, komisyon = 0, toplamAdet = 0;
@@ -611,6 +622,11 @@ function financeRoutes(pool) {
       blok[g.pnl_blok] = (blok[g.pnl_blok] || 0) + net;
       indirilecekKdv += num(g.kdv) || 0;
       giderKategoriDagilimi.push({ kategori: g.kategori, pnl_blok: g.pnl_blok, tutar: net });
+    }
+    // Banka masraflarını operasyonel gidere ekle
+    if (bankaMasrafi > 0) {
+      blok.OPERASYONEL = (blok.OPERASYONEL || 0) + bankaMasrafi;
+      giderKategoriDagilimi.push({ kategori: 'Banka Masrafları', pnl_blok: 'OPERASYONEL', tutar: bankaMasrafi });
     }
     giderKategoriDagilimi.sort((a, b) => b.tutar - a.tutar);
 
@@ -865,7 +881,7 @@ function financeRoutes(pool) {
       if (from) { params.push(from); where += ` AND t.islem_tarihi >= $${params.length}`; }
       if (to) { params.push(to); where += ` AND t.islem_tarihi <= $${params.length}`; }
       if (yon) { params.push(yon); where += ` AND t.yon = $${params.length}`; }
-      if (eslesmemis === '1') where += ` AND t.cari_id IS NULL AND t.yon = 'B'`;
+      if (eslesmemis === '1') where += ` AND t.cari_id IS NULL AND t.banka_masrafi = FALSE AND t.yon = 'B'`;
       if (q) { params.push(`%${q}%`); where += ` AND (t.aciklama ILIKE $${params.length} OR t.karsi_taraf ILIKE $${params.length} OR t.fis_no ILIKE $${params.length})`; }
       const r = await pool.query(`
         SELECT t.*, c.ad AS cari_ad, a.banka_adi, a.iban
@@ -880,12 +896,14 @@ function financeRoutes(pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // Bir banka hareketini cari hesaba (ödeme olarak) eşle / eşlemeyi kaldır
+  // Bir banka hareketini cari hesaba (ödeme) eşle, banka masrafı işaretle veya temizle
   router.post('/banka/hareket/:id/cari', async (req, res) => {
     try {
-      const { cari_id } = req.body;
-      const r = await pool.query(`UPDATE bank_transactions SET cari_id = $1 WHERE id = $2 RETURNING id`,
-        [cari_id || null, req.params.id]);
+      const { cari_id, masraf } = req.body;
+      const isMasraf = !!masraf;
+      const r = await pool.query(
+        `UPDATE bank_transactions SET cari_id = $1, banka_masrafi = $2 WHERE id = $3 RETURNING id`,
+        [isMasraf ? null : (cari_id || null), isMasraf, req.params.id]);
       if (!r.rows.length) return res.status(404).json({ error: 'hareket bulunamadı' });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -966,6 +984,17 @@ function financeRoutes(pool) {
       `, [ad, vkn || null, iban || null, notlar || null, req.params.id]);
       if (!r.rows.length) return res.status(404).json({ error: 'cari bulunamadı' });
       res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.delete('/cari/:id', async (req, res) => {
+    try {
+      // Bağlı kayıtların cari referansını temizle, sonra cariyi sil
+      await pool.query(`UPDATE expenses SET cari_id = NULL WHERE cari_id = $1`, [req.params.id]);
+      await pool.query(`UPDATE bank_transactions SET cari_id = NULL WHERE cari_id = $1`, [req.params.id]);
+      const r = await pool.query(`DELETE FROM cari_accounts WHERE id = $1 RETURNING id`, [req.params.id]);
+      if (!r.rows.length) return res.status(404).json({ error: 'cari bulunamadı' });
+      res.json({ ok: true, id: r.rows[0].id });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 

@@ -123,9 +123,13 @@ export const fetchBankTransactions = async (filters?: {
   return j(await fetch(`${BASE}/api/banka/hareketler?${params}`), 'Banka hareketleri alınamadı');
 };
 
-export const assignTransactionCari = async (txId: number, cariId: number | null): Promise<void> => {
+export const assignTransactionCari = async (
+  txId: number,
+  opts: { cariId?: number | null; masraf?: boolean }
+): Promise<void> => {
   const res = await fetch(`${BASE}/api/banka/hareket/${txId}/cari`, {
-    method: 'POST', headers: jsonHeaders, body: JSON.stringify({ cari_id: cariId }),
+    method: 'POST', headers: jsonHeaders,
+    body: JSON.stringify({ cari_id: opts.cariId ?? null, masraf: !!opts.masraf }),
   });
   if (!res.ok) throw new Error('Eşleştirme yapılamadı');
 };
@@ -147,3 +151,8 @@ export const createCari = async (body: { ad: string; vkn?: string; iban?: string
 
 export const updateCari = async (id: number, body: { ad?: string; vkn?: string; iban?: string; notlar?: string }): Promise<CariAccount> =>
   j(await fetch(`${BASE}/api/cari/${id}`, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(body) }), 'Cari güncellenemedi');
+
+export const deleteCari = async (id: number): Promise<void> => {
+  const res = await fetch(`${BASE}/api/cari/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Cari silinemedi');
+};
