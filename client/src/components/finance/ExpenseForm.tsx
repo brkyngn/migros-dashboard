@@ -1,8 +1,16 @@
 import { useState } from 'react';
 import type { Expense, ExpenseCategory, Product } from '../../types/finance';
+import { TEVKIFAT_ORANLARI } from '../../types/finance';
 import { parseTrNumber, toTrInput, netToBrut, brutToNet } from '../../utils/money';
+import { formatTLDec } from '../../utils/formatters';
 
 const KDV_ORANLARI = [0, 1, 10, 20];
+
+// "2/10" → 0.2
+function tevkifatOran(o: string): number {
+  const m = o.match(/^(\d+)\s*\/\s*(\d+)$/);
+  return m ? parseInt(m[1]) / parseInt(m[2]) : 0;
+}
 
 interface Props {
   categories: ExpenseCategory[];
@@ -24,6 +32,7 @@ export default function ExpenseForm({ categories, products, initial, onSave, onC
   const [urunId, setUrunId] = useState<number | ''>(initial?.urun_id || '');
   const [adetStr, setAdetStr] = useState(initial?.adet != null ? String(initial.adet) : '');
   const [faturaNo, setFaturaNo] = useState(initial?.fatura_no || '');
+  const [tevkifatOraniStr, setTevkifatOraniStr] = useState(initial?.tevkifat_orani || '');
   const [lastEdited, setLastEdited] = useState<'net' | 'brut'>('net');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -52,15 +61,15 @@ export default function ExpenseForm({ categories, products, initial, onSave, onC
     setNetStr(isNaN(brut) ? '' : toTrInput(brutToNet(brut, kdvOrani).net));
   };
 
-  const kdvTutari = (() => {
-    const net = parseTrNumber(netStr);
-    return isNaN(net) ? 0 : netToBrut(net, kdvOrani).kdv;
-  })();
+  const net = parseTrNumber(netStr);
+  const kdvTutari = isNaN(net) ? 0 : netToBrut(net, kdvOrani).kdv;
+  const brutTutar = isNaN(net) ? 0 : net + kdvTutari;
+  const tevkifatTutari = tevkifatOraniStr ? Math.round(kdvTutari * tevkifatOran(tevkifatOraniStr) * 100) / 100 : 0;
+  const odenecekTutar = Math.round((brutTutar - tevkifatTutari) * 100) / 100;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const net = parseTrNumber(netStr);
     if (!tarih || !kategoriId || isNaN(net)) { setError('Tarih, kategori ve tutar zorunlu.'); return; }
     setSaving(true);
     try {
@@ -74,6 +83,7 @@ export default function ExpenseForm({ categories, products, initial, onSave, onC
         urun_id: urunId ? (urunId as number) : null,
         adet: adetStr ? parseTrNumber(adetStr) : null,
         fatura_no: faturaNo || null,
+        tevkifat_orani: tevkifatOraniStr || null,
         kaynak: initial?.kaynak === 'fatura_ai' ? 'fatura_ai' : 'manuel',
       });
     } catch (err) {
@@ -149,6 +159,32 @@ export default function ExpenseForm({ categories, products, initial, onSave, onC
           <label className={labelCls}>Açıklama</label>
           <input value={aciklama} onChange={e => setAciklama(e.target.value)} className={inputCls} placeholder="Opsiyonel not" />
         </div>
+      </div>
+
+      {/* KDV Tevkifatı */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
+        <div>
+          <label className={labelCls}>KDV Tevkifatı</label>
+          <select value={tevkifatOraniStr} onChange={e => setTevkifatOraniStr(e.target.value)} className={inputCls}>
+            <option value="">Yok</option>
+            {TEVKIFAT_ORANLARI.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        {tevkifatOraniStr && (
+          <>
+            <div>
+              <label className={labelCls}>Tevkifat Tutarı (devlete)</label>
+              <input value={toTrInput(tevkifatTutari)} readOnly className={`${inputCls} bg-gray-50 text-gray-500`} tabIndex={-1} />
+            </div>
+            <div>
+              <label className={labelCls}>Satıcıya Ödenecek</label>
+              <input value={toTrInput(odenecekTutar)} readOnly className={`${inputCls} bg-amber-50 text-amber-800 font-medium`} tabIndex={-1} />
+            </div>
+            <div className="text-xs text-gray-400 pb-2">
+              Brüt {formatTLDec(brutTutar)} − Tevkifat {formatTLDec(tevkifatTutari)}. Cari borç ödenecek tutar üzerinden takip edilir.
+            </div>
+          </>
+        )}
       </div>
 
       {error && <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}

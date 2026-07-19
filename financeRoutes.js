@@ -16,6 +16,24 @@ const uploadExcel = multer({
   },
 });
 
+// KDV tevkifatını hesapla. orani "2/10" gibi bir oran; tutar açıkça verilmişse onu kullan,
+// yoksa hesaplanan KDV × oran. Döner: { orani: string|null, tutar: number }
+function hesaplaTevkifat(kdvTutari, orani, tutarRaw) {
+  const o = (orani || '').toString().trim();
+  const explicit = tutarRaw != null && tutarRaw !== '' ? parseFloat(tutarRaw) : NaN;
+  if (!o || o.toLowerCase() === 'yok') {
+    // Oran yok ama açık tutar verildiyse yine de kaydet
+    return { orani: null, tutar: !isNaN(explicit) && explicit > 0 ? Math.round(explicit * 100) / 100 : 0 };
+  }
+  if (!isNaN(explicit) && explicit > 0) return { orani: o, tutar: Math.round(explicit * 100) / 100 };
+  const m = o.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (m) {
+    const oran = parseInt(m[1]) / parseInt(m[2]);
+    return { orani: o, tutar: Math.round(kdvTutari * oran * 100) / 100 };
+  }
+  return { orani: o, tutar: 0 };
+}
+
 // Tedarikçi adından cari hesap bul/oluştur ve id döndür
 async function findOrCreateCari(pool, ad) {
   const t = (ad || '').trim();
@@ -134,6 +152,14 @@ async function initializeFinanceTables(pool) {
   // expenses.cari_id (giderleri cari hesaba bağla)
   await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS cari_id INTEGER REFERENCES cari_accounts(id)`).catch(() => {});
 
+  // KDV tevkifatı alanları:
+  //   tevkifat_orani  = "2/10" gibi (KDV'nin ne kadarının tevkifata tabi olduğu)
+  //   tevkifat_tutari = devlete sorumlu sıfatıyla ödenen KDV (hesaplanan KDV × oran)
+  //   odenecek_tutar  = satıcıya fiilen ödenen tutar (brüt − tevkifat)
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS tevkifat_orani TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS tevkifat_tutari NUMERIC DEFAULT 0`).catch(() => {});
+  await pool.query(`ALTER TABLE expenses ADD COLUMN IF NOT EXISTS odenecek_tutar NUMERIC`).catch(() => {});
+
   // --- Banka hesapları + hareketleri ---
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bank_accounts (
@@ -239,6 +265,8 @@ function mapExpense(r) {
     kdv_tutari: num(r.kdv_tutari),
     brut_tutar: num(r.brut_tutar),
     adet: num(r.adet),
+    tevkifat_tutari: num(r.tevkifat_tutari),
+    odenecek_tutar: num(r.odenecek_tutar),
   };
 }
 
@@ -394,13 +422,16 @@ function financeRoutes(pool) {
       const kdvOrani = parseFloat(b.kdv_orani) || 0;
       const kdvTutari = Math.round(net * kdvOrani) / 100;
       const brut = net + kdvTutari;
+      const tevkifat = hesaplaTevkifat(kdvTutari, b.tevkifat_orani, b.tevkifat_tutari);
+      const odenecek = Math.round((brut - tevkifat.tutar) * 100) / 100;
       const cariId = b.tedarikci ? await findOrCreateCari(pool, b.tedarikci) : null;
       const r = await pool.query(`
-        INSERT INTO expenses (tarih, tedarikci, alici, kategori_id, aciklama, net_tutar, kdv_orani, kdv_tutari, brut_tutar, urun_id, adet, kaynak, fatura_no, cari_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *
+        INSERT INTO expenses (tarih, tedarikci, alici, kategori_id, aciklama, net_tutar, kdv_orani, kdv_tutari, brut_tutar, urun_id, adet, kaynak, fatura_no, cari_id, tevkifat_orani, tevkifat_tutari, odenecek_tutar)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *
       `, [b.tarih, b.tedarikci || null, b.alici || null, b.kategori_id, b.aciklama || null,
           net, kdvOrani, kdvTutari, brut, b.urun_id || null, b.adet || null,
-          b.kaynak === 'fatura_ai' ? 'fatura_ai' : 'manuel', b.fatura_no || null, cariId]);
+          b.kaynak === 'fatura_ai' ? 'fatura_ai' : 'manuel', b.fatura_no || null, cariId,
+          tevkifat.orani, tevkifat.tutar, odenecek]);
       res.json(mapExpense(r.rows[0]));
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -413,16 +444,20 @@ function financeRoutes(pool) {
       const kdvOrani = parseFloat(b.kdv_orani) || 0;
       const kdvTutari = Math.round(net * kdvOrani) / 100;
       const brut = net + kdvTutari;
+      const tevkifat = hesaplaTevkifat(kdvTutari, b.tevkifat_orani, b.tevkifat_tutari);
+      const odenecek = Math.round((brut - tevkifat.tutar) * 100) / 100;
       const cariId = b.tedarikci ? await findOrCreateCari(pool, b.tedarikci) : null;
       const r = await pool.query(`
         UPDATE expenses SET
           tarih = COALESCE($1, tarih), tedarikci = $2, alici = $3,
           kategori_id = COALESCE($4, kategori_id), aciklama = $5,
           net_tutar = $6, kdv_orani = $7, kdv_tutari = $8, brut_tutar = $9,
-          urun_id = $10, adet = $11, fatura_no = $12, cari_id = $13
-        WHERE id = $14 RETURNING *
+          urun_id = $10, adet = $11, fatura_no = $12, cari_id = $13,
+          tevkifat_orani = $14, tevkifat_tutari = $15, odenecek_tutar = $16
+        WHERE id = $17 RETURNING *
       `, [b.tarih, b.tedarikci || null, b.alici || null, b.kategori_id, b.aciklama || null,
-          net, kdvOrani, kdvTutari, brut, b.urun_id || null, b.adet || null, b.fatura_no || null, cariId, req.params.id]);
+          net, kdvOrani, kdvTutari, brut, b.urun_id || null, b.adet || null, b.fatura_no || null, cariId,
+          tevkifat.orani, tevkifat.tutar, odenecek, req.params.id]);
       if (!r.rows.length) return res.status(404).json({ error: 'gider bulunamadı' });
       res.json(mapExpense(r.rows[0]));
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -925,7 +960,7 @@ function financeRoutes(pool) {
       await materializeRecurring(pool);
       const r = await pool.query(`
         SELECT c.id, c.ad, c.vkn, c.iban, c.notlar,
-          COALESCE((SELECT SUM(brut_tutar) FROM expenses WHERE cari_id = c.id), 0) AS borc,
+          COALESCE((SELECT SUM(COALESCE(odenecek_tutar, brut_tutar)) FROM expenses WHERE cari_id = c.id), 0) AS borc,
           COALESCE((SELECT SUM(-tutar) FROM bank_transactions WHERE cari_id = c.id), 0) AS odeme,
           (SELECT COUNT(*)::int FROM expenses WHERE cari_id = c.id) AS fatura_sayisi,
           (SELECT COUNT(*)::int FROM bank_transactions WHERE cari_id = c.id) AS odeme_sayisi

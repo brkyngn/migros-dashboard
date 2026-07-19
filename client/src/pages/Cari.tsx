@@ -23,17 +23,20 @@ interface LedgerRow {
 // ödemelerle kronolojik ekstre + yürüyen bakiye üret. Borç = fatura toplamı (KDV dahil),
 // Alacak = banka ödemesi. Bakiye pozitif ise firmaya borçluyuz.
 function buildLedger(detail: CariDetail): LedgerRow[] {
-  const groups = new Map<string, { tarih: string; faturaNo: string; net: number; kdv: number; brut: number; kalem: number; aciklama: string }>();
+  const groups = new Map<string, { tarih: string; faturaNo: string; net: number; kdv: number; odenecek: number; tevkifat: number; tevkifatOrani: string | null; kalem: number; aciklama: string }>();
   for (const e of detail.giderler) {
     const key = e.fatura_no ? `F:${e.fatura_no}` : `E:${e.id}`;
     let g = groups.get(key);
     if (!g) {
-      g = { tarih: e.tarih?.slice(0, 10) || '', faturaNo: e.fatura_no || '', net: 0, kdv: 0, brut: 0, kalem: 0, aciklama: e.kategori_ad || e.aciklama || 'Fatura' };
+      g = { tarih: e.tarih?.slice(0, 10) || '', faturaNo: e.fatura_no || '', net: 0, kdv: 0, odenecek: 0, tevkifat: 0, tevkifatOrani: null, kalem: 0, aciklama: e.kategori_ad || e.aciklama || 'Fatura' };
       groups.set(key, g);
     }
     g.net += e.net_tutar || 0;
     g.kdv += e.kdv_tutari || 0;
-    g.brut += e.brut_tutar || 0;
+    // Cari borç = satıcıya ödenecek (tevkifat düşülmüş) tutar; yoksa brüt
+    g.odenecek += (e.odenecek_tutar != null ? e.odenecek_tutar : (e.brut_tutar || 0));
+    g.tevkifat += e.tevkifat_tutari || 0;
+    if (e.tevkifat_orani) g.tevkifatOrani = e.tevkifat_orani;
     g.kalem++;
     const t = e.tarih?.slice(0, 10) || '';
     if (t && (!g.tarih || t < g.tarih)) g.tarih = t;
@@ -41,12 +44,14 @@ function buildLedger(detail: CariDetail): LedgerRow[] {
 
   const items: Omit<LedgerRow, 'bakiye' | 'key'>[] = [];
   for (const g of groups.values()) {
+    let aciklama = g.kalem > 1 ? `Fatura (${g.kalem} kalem)` : g.aciklama;
+    if (g.tevkifat > 0.005) aciklama += ` · tevkifat ${g.tevkifatOrani || ''}`.trimEnd();
     items.push({
       tarih: g.tarih, tur: 'Fatura',
-      aciklama: g.kalem > 1 ? `Fatura (${g.kalem} kalem)` : g.aciklama,
+      aciklama,
       faturaNo: g.faturaNo,
       net: Math.round(g.net * 100) / 100, kdv: Math.round(g.kdv * 100) / 100,
-      borc: Math.round(g.brut * 100) / 100, alacak: 0,
+      borc: Math.round(g.odenecek * 100) / 100, alacak: 0,
     });
   }
   for (const o of detail.odemeler) {

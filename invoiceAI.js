@@ -8,7 +8,7 @@ const MODEL = 'claude-opus-4-8';
 const INVOICE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['satici', 'satici_vkn', 'alici', 'fatura_no', 'fatura_tarihi', 'para_birimi', 'kalemler', 'kdv_ozeti', 'toplam_net', 'toplam_kdv', 'toplam_brut'],
+  required: ['satici', 'satici_vkn', 'alici', 'fatura_no', 'fatura_tarihi', 'para_birimi', 'kalemler', 'kdv_ozeti', 'toplam_net', 'toplam_kdv', 'toplam_brut', 'tevkifat_var', 'tevkifat_orani', 'tevkifat_tutari', 'tevkifat_sebebi', 'odenecek_tutar'],
   properties: {
     satici: { type: 'string', description: 'Satıcı unvanı' },
     satici_vkn: { type: ['string', 'null'], description: 'Satıcı VKN/TCKN (varsa)' },
@@ -16,6 +16,11 @@ const INVOICE_SCHEMA = {
     fatura_no: { type: 'string' },
     fatura_tarihi: { type: 'string', description: 'YYYY-MM-DD formatında' },
     para_birimi: { type: 'string', description: 'TRY, USD, EUR...' },
+    tevkifat_var: { type: 'boolean', description: 'KDV tevkifatı içeriyor mu (Fatura Tipi TEVKIFAT ise true)' },
+    tevkifat_orani: { type: ['string', 'null'], description: 'Tevkifat oranı, "2/10" formatında (yoksa null)' },
+    tevkifat_tutari: { type: ['number', 'null'], description: 'Hesaplanan KDV tevkifat tutarı, TL (yoksa null)' },
+    tevkifat_sebebi: { type: ['string', 'null'], description: 'Tevkifat sebebi/kodu, örn "624-Yük Taşımacılığı Hizmeti" (yoksa null)' },
+    odenecek_tutar: { type: ['number', 'null'], description: 'Satıcıya fiilen ödenecek tutar (Ödenecek Tutar satırı; tevkifat varsa brütten düşük)' },
     kalemler: {
       type: 'array',
       items: {
@@ -57,6 +62,14 @@ const PROMPT = `Bu bir Türk faturası (veya fişi). Belgedeki bilgileri dikkatl
 - Tüm satır kalemleri: açıklama, miktar, birim fiyat, KDV hariç net tutar, KDV oranı
 - KDV özeti: her oran için matrah ve KDV tutarı
 - Genel toplamlar: net (KDV hariç), toplam KDV, brüt (KDV dahil)
+
+KDV Tevkifatı (önemli):
+- Fatura Tipi "TEVKIFAT" ise veya "KDV Tevkifat", "Tevkifata Tabi", "X/10" gibi ifadeler varsa tevkifat_var=true.
+- tevkifat_orani: "2/10", "5/10", "9/10" gibi. Genelde "KDV Tevkifat (%..)=..." veya "Tevkifat Oranı" satırında.
+- tevkifat_tutari: "Hesaplanan KDV Tevkifat" satırındaki tutar (devlete sorumlu sıfatıyla ödenecek KDV).
+- odenecek_tutar: "Ödenecek Tutar" satırı — satıcıya fiilen ödenen (tevkifat düşülmüş) tutar. Tevkifat yoksa Vergiler Dahil Toplam ile aynıdır.
+- tevkifat_sebebi: "Tevkifat Sebebi" satırı (örn "624-Yük Taşımacılığı Hizmeti").
+- Tevkifat yoksa: tevkifat_var=false, diğer tevkifat alanları null.
 
 Kurallar:
 - Tutarları sayı olarak ver (Türkçe formatı 1.234,56 → 1234.56 çevir).

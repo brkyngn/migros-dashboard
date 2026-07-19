@@ -39,7 +39,12 @@ export interface Expense {
   fatura_no: string | null;
   tekrarlayan_id: number | null;
   donem: string | null;
+  tevkifat_orani: string | null;
+  tevkifat_tutari: number | null;
+  odenecek_tutar: number | null;
 }
+
+export const TEVKIFAT_ORANLARI = ['2/10', '3/10', '4/10', '5/10', '7/10', '9/10', '10/10'];
 
 export interface RecurringExpense {
   id: number;
@@ -208,4 +213,9 @@ export interface ParsedInvoice {
   toplam_net: number;
   toplam_kdv: number;
   toplam_brut: number;
+  tevkifat_var: boolean;
+  tevkifat_orani: string | null;
+  tevkifat_tutari: number | null;
+  tevkifat_sebebi: string | null;
+  odenecek_tutar: number | null;
 }

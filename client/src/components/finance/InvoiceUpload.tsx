@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { ExpenseCategory, ParsedInvoice, Product } from '../../types/finance';
+import { TEVKIFAT_ORANLARI } from '../../types/finance';
 import { analyzeInvoice, checkDuplicate, createExpense } from '../../api/finance';
 import { formatTLDec } from '../../utils/formatters';
 import { toTrInput, parseTrNumber } from '../../utils/money';
@@ -30,6 +31,7 @@ export default function InvoiceUpload({ categories, products, onSaved }: Props) 
   const [satici, setSatici] = useState('');
   const [faturaNo, setFaturaNo] = useState('');
   const [faturaTarihi, setFaturaTarihi] = useState('');
+  const [tevkifatOrani, setTevkifatOrani] = useState('');
   const [duplicate, setDuplicate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -52,6 +54,7 @@ export default function InvoiceUpload({ categories, products, onSaved }: Props) 
       setSatici(parsed.satici || '');
       setFaturaNo(parsed.fatura_no || '');
       setFaturaTarihi(parsed.fatura_tarihi || new Date().toISOString().slice(0, 10));
+      setTevkifatOrani(parsed.tevkifat_var && parsed.tevkifat_orani ? parsed.tevkifat_orani : '');
       setLines(parsed.kalemler.map(k => ({
         aciklama: k.aciklama,
         adetStr: k.adet ? String(k.adet) : '',
@@ -100,6 +103,7 @@ export default function InvoiceUpload({ categories, products, onSaved }: Props) 
           urun_id: l.urun_id ? (l.urun_id as number) : null,
           adet: l.adetStr ? parseTrNumber(l.adetStr) : null,
           fatura_no: faturaNo || null,
+          tevkifat_orani: tevkifatOrani || null,
           kaynak: 'fatura_ai',
         });
       }
@@ -174,6 +178,31 @@ export default function InvoiceUpload({ categories, products, onSaved }: Props) 
             <div className="flex items-end text-xs text-gray-500 pb-2">
               AI toplamları: Net {formatTLDec(invoice.toplam_net)} · KDV {formatTLDec(invoice.toplam_kdv)} · Brüt {formatTLDec(invoice.toplam_brut)}
             </div>
+          </div>
+
+          {/* KDV Tevkifatı */}
+          <div className={`rounded-lg p-3 ${tevkifatOrani ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'}`}>
+            <div className="flex flex-wrap items-center gap-3">
+              <div>
+                <label className={labelCls}>KDV Tevkifatı {invoice.tevkifat_var && <span className="text-amber-600">(faturada tespit edildi)</span>}</label>
+                <select value={tevkifatOrani} onChange={e => setTevkifatOrani(e.target.value)} className={`${inputCls} w-32`}>
+                  <option value="">Yok</option>
+                  {TEVKIFAT_ORANLARI.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              {tevkifatOrani && (
+                <div className="text-sm text-amber-800 pt-4">
+                  {invoice.tevkifat_sebebi && <span className="mr-3">📋 {invoice.tevkifat_sebebi}</span>}
+                  {invoice.tevkifat_tutari != null && <span className="mr-3">Tevkifat (devlete): <b>{formatTLDec(invoice.tevkifat_tutari)}</b></span>}
+                  {invoice.odenecek_tutar != null && <span>Satıcıya ödenecek: <b>{formatTLDec(invoice.odenecek_tutar)}</b></span>}
+                </div>
+              )}
+            </div>
+            {tevkifatOrani && (
+              <div className="text-xs text-gray-500 mt-1">
+                Tevkifat oranı tüm kalemlere uygulanır. Cari borç, satıcıya ödenecek (tevkifat düşülmüş) tutar üzerinden takip edilir.
+              </div>
+            )}
           </div>
 
           <div className="overflow-x-auto">
