@@ -558,6 +558,27 @@ app.get('/api/debug/stok-schema', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// DEPO_TUR dağılımı + DM adayı teslim noktaları
+app.get('/api/debug/depo-tur', async (req, res) => {
+  try {
+    const latest = await pool.query(`SELECT MAX(veri_tarihi) AS son FROM stok`);
+    const son = latest.rows[0]?.son;
+    const dagilim = await pool.query(`
+      SELECT "DEPO_TUR", COUNT(*) AS kayit, COUNT(DISTINCT "TESLIM_NOKTASI_ID") AS nokta
+      FROM stok WHERE veri_tarihi = $1 GROUP BY "DEPO_TUR" ORDER BY kayit DESC
+    `, [son]);
+    const dmAday = await pool.query(`
+      SELECT DISTINCT "DEPO_TUR", "TESLIM_NOKTASI_ID", "TESLIM_NOKTASI_ACIKLAMA"
+      FROM stok WHERE veri_tarihi = $1
+        AND (UPPER("TESLIM_NOKTASI_ACIKLAMA") LIKE '%DA%TIM%'
+             OR UPPER("TESLIM_NOKTASI_ACIKLAMA") LIKE '%DEPO%'
+             OR "DEPO_TUR" <> 'MA')
+      ORDER BY "DEPO_TUR", "TESLIM_NOKTASI_ACIKLAMA" LIMIT 50
+    `, [son]);
+    res.json({ veri_tarihi: son, dagilim: dagilim.rows, dm_adaylari: dmAday.rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/trigger-email', async (req, res) => {
   const apiKey   = process.env.RESEND_API_KEY;
   const emailTo  = process.env.EMAIL_TO;
