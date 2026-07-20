@@ -21,7 +21,9 @@ export interface StockRecord {
   GUNLUK_YUKLEME_TUTARI: string;
   STOK_GUN: string;
   IL_ADI: string;
+  TESLIM_NOKTASI_ID?: string;
   TESLIM_NOKTASI_ACIKLAMA: string;
+  DEPO_TUR?: string;
   URUN_SATICI_ADI: string;
   SATICI_URUN_KODU: string;
   veri_tarihi?: string;

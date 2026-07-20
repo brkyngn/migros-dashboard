@@ -9,6 +9,22 @@ import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
 const PROD_COLORS = ['#C0392B', '#1A3A5C', '#F5A623', '#2D6A4F', '#6D28D9', '#0891B2'];
 
+type LocType = 'magaza' | 'dm' | 'iade' | 'bloke';
+
+// DEPO_TUR: MA=Mağaza, A=Dağıtım Merkezi, I=İade Deposu, B=Bloke Deposu
+function locType(r: StockRecord): LocType {
+  const dt = (r.DEPO_TUR || '').toUpperCase().trim();
+  if (dt === 'MA') return 'magaza';
+  if (dt === 'A')  return 'dm';
+  if (dt === 'I')  return 'iade';
+  if (dt === 'B')  return 'bloke';
+  const a = (r.TESLIM_NOKTASI_ACIKLAMA || '').toUpperCase();
+  if (a.includes('BLOKE'))                        return 'bloke';
+  if (a.includes('İADE') || a.includes('IADE'))   return 'iade';
+  if (a.includes('DAĞITIM') || a.includes('DAGITIM') || / DM\b/.test(a)) return 'dm';
+  return 'magaza';
+}
+
 function fmtTL(n: number) {
   return Math.round(n).toLocaleString('tr-TR') + ' ₺';
 }
@@ -50,6 +66,18 @@ export default function DailyStock() {
       .finally(() => setLoading(false));
   }, [selectedDate]);
 
+  // Lokasyonları türe göre ayır — mağaza / DM / iade / bloke
+  const { magazaRows, dmRows } = useMemo(() => {
+    const magaza: StockRecord[] = [], dm: StockRecord[] = [];
+    rows.forEach(r => {
+      const t = locType(r);
+      if (t === 'dm') dm.push(r);
+      else if (t === 'magaza') magaza.push(r);
+      // iade / bloke: ana panoya dahil edilmez
+    });
+    return { magazaRows: magaza, dmRows: dm };
+  }, [rows]);
+
   const stats = useMemo(() => {
     let toplamStok = 0, toplamTutar = 0, gunlukSatis = 0, gunlukSatisTutar = 0, gunlukYukleme = 0;
     const stokGunArr: number[] = [];
@@ -57,7 +85,7 @@ export default function DailyStock() {
     const ilMap: Record<string, { stok: number; satis: number; tutar: number }> = {};
     const urunMap: Record<string, { stok: number; satis: number; tutar: number; sgSum: number; sgCnt: number; kod: string }> = {};
 
-    rows.forEach(r => {
+    magazaRows.forEach(r => {
       const sm  = parseFloat(r.STOK_MIKTARI) || 0;
       const st  = parseFloat(r.STOK_TUTARI) || 0;
       const gs  = parseFloat(r.GUNLUK_SATIS_MIKTARI) || 0;
@@ -118,7 +146,46 @@ export default function DailyStock() {
         color: PROD_COLORS[i % PROD_COLORS.length],
       })),
     };
-  }, [rows]);
+  }, [magazaRows]);
+
+  // DM (Dağıtım Merkezi) istatistikleri
+  const dmStats = useMemo(() => {
+    let toplamStok = 0, toplamTutar = 0, gunlukYukleme = 0;
+    // DM adı → { ürün kısa adı → stok }
+    const dmMap: Record<string, { il: string; urunler: Record<string, { stok: number; tutar: number; yukleme: number }> }> = {};
+    const urunSet = new Set<string>();
+
+    dmRows.forEach(r => {
+      const sm = parseFloat(r.STOK_MIKTARI) || 0;
+      const st = parseFloat(r.STOK_TUTARI) || 0;
+      const gy = parseFloat(r.GUNLUK_YUKLEME_MIKTARI) || 0;
+      const dm = r.TESLIM_NOKTASI_ACIKLAMA || '—';
+      const urun = r.URUN_SATICI_ADI || r.SATICI_URUN_KODU || '—';
+      toplamStok += sm; toplamTutar += st; gunlukYukleme += gy;
+      urunSet.add(urun);
+      if (!dmMap[dm]) dmMap[dm] = { il: r.IL_ADI || '', urunler: {} };
+      if (!dmMap[dm].urunler[urun]) dmMap[dm].urunler[urun] = { stok: 0, tutar: 0, yukleme: 0 };
+      dmMap[dm].urunler[urun].stok += sm;
+      dmMap[dm].urunler[urun].tutar += st;
+      dmMap[dm].urunler[urun].yukleme += gy;
+    });
+
+    const urunler = Array.from(urunSet).sort();
+    const merkezler = Object.entries(dmMap)
+      .map(([ad, d]) => ({
+        ad, il: d.il, urunler: d.urunler,
+        toplam: Object.values(d.urunler).reduce((s, u) => s + u.stok, 0),
+      }))
+      .sort((a, b) => a.ad.localeCompare(b.ad, 'tr'));
+
+    return {
+      toplamStok: Math.round(toplamStok),
+      toplamTutar: Math.round(toplamTutar),
+      gunlukYukleme: Math.round(gunlukYukleme),
+      adet: merkezler.length,
+      urunler, merkezler,
+    };
+  }, [dmRows]);
 
   const formatDateTR = (d: string) => {
     if (!d) return '';
@@ -164,7 +231,7 @@ export default function DailyStock() {
             <span className="text-gray-400 text-xs">stok raporu</span>
           </div>
         )}
-        <div className="ml-auto text-xs text-gray-400">{rows.length} lokasyon · {allDates.length} günlük veri</div>
+        <div className="ml-auto text-xs text-gray-400">{magazaRows.length} mağaza · {dmStats.adet} DM · {allDates.length} günlük veri</div>
       </div>
 
       {loading ? <LoadingSkeleton rows={8} /> : (
@@ -348,11 +415,11 @@ export default function DailyStock() {
             </div>
           </div>
 
-          {/* Tüm lokasyonlar */}
+          {/* Tüm mağazalar */}
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <div className="font-semibold text-gray-800">Tüm Lokasyonlar</div>
-              <div className="text-xs text-gray-400">{rows.length} kayıt</div>
+              <div className="font-semibold text-gray-800">Tüm Mağazalar</div>
+              <div className="text-xs text-gray-400">{magazaRows.length} mağaza (DM hariç)</div>
             </div>
             <div className="overflow-auto max-h-96">
               <table className="w-full text-sm">
@@ -367,7 +434,7 @@ export default function DailyStock() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.slice(0, 500).map((r, i) => {
+                  {magazaRows.slice(0, 500).map((r, i) => {
                     const sm = parseFloat(r.STOK_MIKTARI) || 0;
                     const st = parseFloat(r.STOK_TUTARI) || 0;
                     const gs = parseFloat(r.GUNLUK_SATIS_MIKTARI) || 0;
@@ -390,13 +457,90 @@ export default function DailyStock() {
                       </tr>
                     );
                   })}
-                  {rows.length > 500 && (
-                    <tr><td colSpan={6} className="px-4 py-3 text-center text-xs text-gray-400">İlk 500 kayıt gösteriliyor · Toplam {formatNum(rows.length)} lokasyon</td></tr>
+                  {magazaRows.length > 500 && (
+                    <tr><td colSpan={6} className="px-4 py-3 text-center text-xs text-gray-400">İlk 500 kayıt gösteriliyor · Toplam {formatNum(magazaRows.length)} mağaza</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           </div>
+
+          {/* Dağıtım Merkezleri (DM) */}
+          {dmStats.adet > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-4 rounded-full flex-shrink-0" style={{ background: '#d97706' }} />
+                <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Dağıtım Merkezleri (DM)</span>
+                <div className="flex-1 h-px bg-gray-200" />
+              </div>
+
+              {/* DM özet KPI */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {[
+                  { label: 'DM Sayısı',        value: String(dmStats.adet),              icon: '🏭', color: '#d97706' },
+                  { label: 'DM Toplam Stok',   value: formatNum(dmStats.toplamStok),     icon: '📦', color: '#f5a623' },
+                  { label: 'DM Stok Tutarı',   value: fmtTL(dmStats.toplamTutar),        icon: '💰', color: '#0f3460' },
+                  { label: 'DM Günlük Yükleme',value: formatNum(dmStats.gunlukYukleme),  icon: '🚚', color: '#16a34a' },
+                ].map(card => (
+                  <div key={card.label} className="bg-white rounded-xl border border-gray-200 p-5 flex items-start gap-4"
+                    style={{ borderTop: '3px solid #d97706' }}>
+                    <div className="text-2xl">{card.icon}</div>
+                    <div>
+                      <div className="text-xs text-gray-500 font-medium mb-1">{card.label}</div>
+                      <div className="text-2xl font-bold" style={{ color: card.color }}>{card.value}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* DM detay tablosu */}
+              <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                  <div className="font-semibold text-gray-800">Dağıtım Merkezi Bazında Stok</div>
+                  <div className="text-xs text-gray-400">{dmStats.adet} merkez</div>
+                </div>
+                <table className="w-full text-xs min-w-[520px]">
+                  <thead>
+                    <tr className="bg-gray-50 text-gray-500 uppercase tracking-wide">
+                      <th className="px-4 py-2.5 text-left font-semibold">Dağıtım Merkezi</th>
+                      <th className="px-3 py-2.5 text-left font-semibold">İl</th>
+                      {dmStats.urunler.map(u => (
+                        <th key={u} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">{u.length > 20 ? u.slice(0, 18) + '…' : u}</th>
+                      ))}
+                      <th className="px-4 py-2.5 text-right font-semibold">Toplam</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dmStats.merkezler.map(m => (
+                      <tr key={m.ad} className="border-t border-gray-50 hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-700 font-medium">{m.ad}</td>
+                        <td className="px-3 py-2 text-gray-500">{m.il}</td>
+                        {dmStats.urunler.map(u => {
+                          const stok = m.urunler[u]?.stok ?? 0;
+                          const has = u in m.urunler;
+                          return (
+                            <td key={u} className={`px-3 py-2 text-right font-mono ${!has ? 'text-gray-300' : stok === 0 ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
+                              {has ? formatNum(Math.round(stok)) : '—'}
+                            </td>
+                          );
+                        })}
+                        <td className="px-4 py-2 text-right font-mono font-bold text-gray-800">{formatNum(Math.round(m.toplam))}</td>
+                      </tr>
+                    ))}
+                    {/* Toplam satırı */}
+                    <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold">
+                      <td className="px-4 py-2.5 text-gray-800" colSpan={2}>TOPLAM ({dmStats.adet} DM)</td>
+                      {dmStats.urunler.map(u => {
+                        const t = dmStats.merkezler.reduce((s, m) => s + (m.urunler[u]?.stok ?? 0), 0);
+                        return <td key={u} className="px-3 py-2.5 text-right font-mono text-gray-800">{formatNum(Math.round(t))}</td>;
+                      })}
+                      <td className="px-4 py-2.5 text-right font-mono text-gray-900">{formatNum(dmStats.toplamStok)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
