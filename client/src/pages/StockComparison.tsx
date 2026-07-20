@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, Fragment } from 'react';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 import { formatNum, formatTL } from '../utils/formatters';
 
@@ -18,6 +18,8 @@ interface RawStock {
   DEPO_TUR?: string;
 }
 
+type LocType = 'magaza' | 'dm' | 'iade' | 'bloke';
+
 interface LocationDiff {
   teslimNoktasi: string;
   teslimNoktasiId: string;
@@ -30,7 +32,8 @@ interface LocationDiff {
   tutarFark: number;
   gunlukSatis: number;
   gunlukYukleme: number;
-  dm: boolean;
+  tur: LocType;
+  dm: boolean; // tur === 'dm' kısayolu (geriye dönük uyum)
 }
 
 interface ProductInfo {
@@ -50,6 +53,10 @@ interface ProductInfo {
   rafBosYeni: number;
   dmEski: number;
   dmYeni: number;
+  dmFark: number;
+  dmEskiTutar: number;
+  dmYeniTutar: number;
+  retailEski: number;
   retailYeni: number;
   azalanlar: LocationDiff[];
   artanlar: LocationDiff[];
@@ -76,9 +83,19 @@ function getProductStyle(name: string) {
   return { short: name.slice(0, 20), color: '#6b7280', colorLight: '#f9fafb', border: '#e5e7eb' };
 }
 
-function isDM(row: RawStock) {
-  const aciklama = (row.TESLIM_NOKTASI_ACIKLAMA || '').toUpperCase();
-  return aciklama.includes('DAGITIM') || aciklama.includes('DAĞITIM') || row.DEPO_TUR === 'A';
+// DEPO_TUR: MA=Mağaza, A=Dağıtım Merkezi, I=İade Deposu, B=Bloke Deposu
+function locType(row: RawStock): LocType {
+  const dt = (row.DEPO_TUR || '').toUpperCase().trim();
+  if (dt === 'MA') return 'magaza';
+  if (dt === 'A')  return 'dm';
+  if (dt === 'I')  return 'iade';
+  if (dt === 'B')  return 'bloke';
+  // DEPO_TUR boşsa açıklamadan tahmin
+  const a = (row.TESLIM_NOKTASI_ACIKLAMA || '').toUpperCase();
+  if (a.includes('BLOKE'))                        return 'bloke';
+  if (a.includes('İADE') || a.includes('IADE'))   return 'iade';
+  if (a.includes('DAĞITIM') || a.includes('DAGITIM') || / DM\b/.test(a)) return 'dm';
+  return 'magaza';
 }
 
 function formatDateTR(d: string) {
@@ -164,7 +181,8 @@ export default function StockComparison() {
         tutarFark: pf(newR?.STOK_TUTARI) - pf(oldR?.STOK_TUTARI),
         gunlukSatis:   pf(newR?.GUNLUK_SATIS_MIKTARI   || oldR?.GUNLUK_SATIS_MIKTARI),
         gunlukYukleme: pf(newR?.GUNLUK_YUKLEME_MIKTARI || oldR?.GUNLUK_YUKLEME_MIKTARI),
-        dm: isDM(ref),
+        tur: locType(ref),
+        dm: locType(ref) === 'dm',
       });
     });
 
@@ -174,8 +192,8 @@ export default function StockComparison() {
       const toplamEski = locs.reduce((s, l) => s + l.eskiStok, 0);
       const toplamYeni = locs.reduce((s, l) => s + l.yeniStok, 0);
       const toplamFark = toplamYeni - toplamEski;
-      const dmLocs     = locs.filter(l => l.dm);
-      const retailLocs = locs.filter(l => !l.dm);
+      const dmLocs     = locs.filter(l => l.tur === 'dm');
+      const retailLocs = locs.filter(l => l.tur === 'magaza');
       return {
         kod, displayName: d.displayName, shortName: style.short,
         color: style.color, colorLight: style.colorLight, border: style.border,
@@ -183,16 +201,21 @@ export default function StockComparison() {
         toplamEski, toplamYeni, toplamFark,
         toplamEskiTutar: locs.reduce((s, l) => s + l.eskiTutar, 0),
         toplamYeniTutar: locs.reduce((s, l) => s + l.yeniTutar, 0),
-        rafBosEski: locs.filter(l => l.eskiStok === 0 && !l.dm).length,
-        rafBosYeni: locs.filter(l => l.yeniStok === 0 && !l.dm).length,
+        rafBosEski: retailLocs.filter(l => l.eskiStok === 0).length,
+        rafBosYeni: retailLocs.filter(l => l.yeniStok === 0).length,
         dmEski: dmLocs.reduce((s, l) => s + l.eskiStok, 0),
         dmYeni: dmLocs.reduce((s, l) => s + l.yeniStok, 0),
+        dmFark: dmLocs.reduce((s, l) => s + l.fark, 0),
+        dmEskiTutar: dmLocs.reduce((s, l) => s + l.eskiTutar, 0),
+        dmYeniTutar: dmLocs.reduce((s, l) => s + l.yeniTutar, 0),
+        retailEski: retailLocs.reduce((s, l) => s + l.eskiStok, 0),
         retailYeni: retailLocs.reduce((s, l) => s + l.yeniStok, 0),
-        azalanlar:    locs.filter(l => l.fark < 0).sort((a, b) => a.fark - b.fark),
-        artanlar:     locs.filter(l => l.fark > 0).sort((a, b) => b.fark - a.fark),
-        yeniRafBos:   locs.filter(l => l.eskiStok > 0 && l.yeniStok === 0 && !l.dm),
-        yenilenen:    locs.filter(l => l.eskiStok === 0 && l.yeniStok > 0 && !l.dm),
-        kritikRafBos: locs.filter(l => l.yeniStok === 0 && !l.dm && l.gunlukSatis > 0.3)
+        // Mağaza tabloları: yalnızca DEPO_TUR=MA (DM / İade / Bloke depoları hariç)
+        azalanlar:    retailLocs.filter(l => l.fark < 0).sort((a, b) => a.fark - b.fark),
+        artanlar:     retailLocs.filter(l => l.fark > 0).sort((a, b) => b.fark - a.fark),
+        yeniRafBos:   retailLocs.filter(l => l.eskiStok > 0 && l.yeniStok === 0),
+        yenilenen:    retailLocs.filter(l => l.eskiStok === 0 && l.yeniStok > 0),
+        kritikRafBos: retailLocs.filter(l => l.yeniStok === 0 && l.gunlukSatis > 0.3)
                           .sort((a, b) => b.gunlukSatis - a.gunlukSatis),
         dmLocs,
       };
@@ -276,10 +299,10 @@ export default function StockComparison() {
                 <div key={p.kod} className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     {
-                      label: `${p.shortName} Net Stok`,
-                      value: formatNum(Math.round(p.toplamYeni)),
-                      sub: `Eski: ${formatNum(Math.round(p.toplamEski))}`,
-                      delta: p.toplamFark,
+                      label: `${p.shortName} Mağaza Stok`,
+                      value: formatNum(Math.round(p.retailYeni)),
+                      sub: `Eski: ${formatNum(Math.round(p.retailEski))}`,
+                      delta: p.retailYeni - p.retailEski,
                       color: p.color,
                     },
                     {
@@ -299,7 +322,8 @@ export default function StockComparison() {
                     {
                       label: `${p.shortName} DM Stok`,
                       value: formatNum(Math.round(p.dmYeni)),
-                      sub: `Retail: ${formatNum(Math.round(p.retailYeni))}`,
+                      sub: `Eski: ${formatNum(Math.round(p.dmEski))}`,
+                      delta: p.dmFark,
                       color: p.color,
                     },
                   ].map((card, i) => (
@@ -481,8 +505,33 @@ export default function StockComparison() {
 
           {/* ── DM ANALİZİ ── */}
           <section>
-            <SectionHead color="#d97706">Dağıtım Merkezleri — Güncel Durum</SectionHead>
-            <DmGrid products={products} />
+            <SectionHead color="#d97706">Dağıtım Merkezleri (DM) — Toplam Stok & Değişim</SectionHead>
+
+            {/* DM toplam özet kartları */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+              {products.map(p => (
+                <div key={p.kod + '-dm-kpi'} className="bg-white rounded-xl border border-gray-200 p-4"
+                  style={{ borderTop: `3px solid ${p.color}` }}>
+                  <div className="text-xs text-gray-500 font-medium mb-2 leading-tight">{p.shortName} · DM Toplam Stok</div>
+                  <div className="text-2xl font-bold text-gray-800 leading-none mb-1">{formatNum(Math.round(p.dmYeni))}</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${p.dmFark >= 0 ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                      {p.dmFark >= 0 ? '+' : ''}{formatNum(Math.round(p.dmFark))}
+                    </span>
+                    <span className="text-xs text-gray-400">Eski: {formatNum(Math.round(p.dmEski))}</span>
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1">{p.dmLocs.length} dağıtım merkezi</div>
+                </div>
+              ))}
+            </div>
+
+            {/* DM detay tablosu — her DM için eski → yeni → fark */}
+            <DmTable products={products} />
+
+            {/* Durum kartları */}
+            <div className="mt-4">
+              <DmGrid products={products} />
+            </div>
           </section>
 
           {/* ── KRİTİK RAF BOŞ ── */}
@@ -547,6 +596,87 @@ function Tag({ color, children }: { color: string; children: React.ReactNode }) 
       style={{ background: color + '18', color }}>
       {children}
     </span>
+  );
+}
+
+function DmTable({ products }: { products: ProductInfo[] }) {
+  // DM adı → ürün kısa adı → LocationDiff
+  const dmMap: Record<string, Record<string, LocationDiff>> = {};
+  products.forEach(p => {
+    p.dmLocs.forEach(l => {
+      if (!dmMap[l.teslimNoktasi]) dmMap[l.teslimNoktasi] = {};
+      dmMap[l.teslimNoktasi][p.shortName] = l;
+    });
+  });
+
+  const rows = Object.entries(dmMap).sort((a, b) => a[0].localeCompare(b[0], 'tr'));
+  if (!rows.length) return null;
+
+  // Alt toplam satırı
+  const totals = products.map(p => ({
+    short: p.shortName, color: p.color,
+    eski: p.dmEski, yeni: p.dmYeni, fark: p.dmFark,
+  }));
+
+  const cell = (l?: LocationDiff) => {
+    if (!l) return <><td className="px-3 py-2 text-right font-mono text-gray-300">—</td><td className="px-3 py-2 text-right font-mono text-gray-300">—</td><td className="px-3 py-2 text-right font-mono text-gray-300">—</td></>;
+    const farkColor = l.fark > 0 ? 'text-green-600' : l.fark < 0 ? 'text-red-600' : 'text-gray-400';
+    const yeniColor = l.yeniStok === 0 ? 'text-red-600 font-bold' : 'text-gray-700';
+    return (
+      <>
+        <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(Math.round(l.eskiStok))}</td>
+        <td className={`px-3 py-2 text-right font-mono ${yeniColor}`}>{formatNum(Math.round(l.yeniStok))}</td>
+        <td className={`px-3 py-2 text-right font-mono font-bold ${farkColor}`}>{l.fark >= 0 ? '+' : ''}{formatNum(Math.round(l.fark))}</td>
+      </>
+    );
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+      <table className="w-full text-xs min-w-[560px]">
+        <thead>
+          <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide">
+            <th className="px-4 py-2.5 text-left font-semibold" rowSpan={2}>Dağıtım Merkezi</th>
+            {products.map(p => (
+              <th key={p.kod} colSpan={3} className="px-3 py-2 text-center font-semibold border-l border-gray-100" style={{ color: p.color }}>{p.shortName}</th>
+            ))}
+          </tr>
+          <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+            {products.map(p => (
+              <Fragment key={p.kod}>
+                <th className="px-3 py-1.5 text-right font-semibold border-l border-gray-100">Eski</th>
+                <th className="px-3 py-1.5 text-right font-semibold">Yeni</th>
+                <th className="px-3 py-1.5 text-right font-semibold">Fark</th>
+              </Fragment>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([dmName, prods]) => (
+            <tr key={dmName} className="border-t border-gray-50 hover:bg-gray-50">
+              <td className="px-4 py-2 text-gray-700 font-medium">{dmName}</td>
+              {products.map(p => (
+                <Fragment key={p.kod}>{cell(prods[p.shortName])}</Fragment>
+              ))}
+            </tr>
+          ))}
+          {/* Toplam */}
+          <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold">
+            <td className="px-4 py-2.5 text-gray-800">TOPLAM ({rows.length} DM)</td>
+            {totals.map(t => {
+              const farkColor = t.fark > 0 ? 'text-green-600' : t.fark < 0 ? 'text-red-600' : 'text-gray-400';
+              return (
+                <Fragment key={t.short}>
+                  <td className="px-3 py-2.5 text-right font-mono text-gray-500">{formatNum(Math.round(t.eski))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-gray-800">{formatNum(Math.round(t.yeni))}</td>
+                  <td className={`px-3 py-2.5 text-right font-mono ${farkColor}`}>{t.fark >= 0 ? '+' : ''}{formatNum(Math.round(t.fark))}</td>
+                </Fragment>
+              );
+            })}
+          </tr>
+        </tbody>
+      </table>
+    </div>
   );
 }
 
