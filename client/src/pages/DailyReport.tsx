@@ -18,6 +18,24 @@ function getProductName(sku: string) {
   return p ? p.shortName : sku;
 }
 
+// Mağaza tipini StoreName metninden çıkar (StoreType kolonu güvenilmez).
+// Sıra önemli: MMM, MM'den; MACROCENTER, M'den önce kontrol edilmeli.
+function getStoreType(name: string): string {
+  const n = (name || '').toUpperCase();
+  if (/\bMACRO ?CENTER\b/.test(n) || /\bMACRO\b/.test(n)) return 'Macrocenter';
+  if (/\b5M\b/.test(n))  return '5M';
+  if (/\bMMM\b/.test(n)) return 'MMM';
+  if (/\bMM\b/.test(n))  return 'MM';
+  if (/\bM\b/.test(n))   return 'M';
+  return 'Diğer';
+}
+
+const TYPE_ORDER = ['MMM', 'MM', '5M', 'Macrocenter', 'M', 'Diğer'];
+const TYPE_COLORS: Record<string, string> = {
+  'MMM': '#C0392B', 'MM': '#1A3A5C', '5M': '#F5A623',
+  'Macrocenter': '#6D28D9', 'M': '#0891B2', 'Diğer': '#6b7280',
+};
+
 export default function DailyReport() {
   const [allDates, setAllDates] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -98,9 +116,30 @@ export default function DailyReport() {
       .sort((a, b) => b.qty - a.qty)
       .slice(0, 10);
 
+    // Mağaza tipine göre gruplama (MM / MMM / 5M / Macrocenter)
+    const typeMap: Record<string, { qty: number; rev: number; stores: Set<string> }> = {};
+    sales.forEach(s => {
+      const t = getStoreType(s.StoreName);
+      if (!typeMap[t]) typeMap[t] = { qty: 0, rev: 0, stores: new Set() };
+      typeMap[t].qty += parseFloat(s.QuantitySold) || 0;
+      typeMap[t].rev += parseFloat(s.NetSalesValue) || 0;
+      typeMap[t].stores.add(s.StoreNumber);
+    });
+    const storeTypes = TYPE_ORDER
+      .filter(t => typeMap[t])
+      .map(t => ({
+        type: t,
+        color: TYPE_COLORS[t],
+        qty: Math.round(typeMap[t].qty),
+        rev: Math.round(typeMap[t].rev),
+        stores: typeMap[t].stores.size,
+        shareQty: totalQty > 0 ? typeMap[t].qty / totalQty * 100 : 0,
+        shareRev: totalRev > 0 ? typeMap[t].rev / totalRev * 100 : 0,
+      }));
+
     return { products, totalQty: Math.round(totalQty), totalRev: Math.round(totalRev),
       totalStores: new Set(sales.map(s => s.StoreNumber)).size,
-      topStores, topCities };
+      topStores, topCities, storeTypes };
   }, [sales]);
 
   const formatDateTR = (d: string) => {
@@ -280,6 +319,74 @@ export default function DailyReport() {
                 <div className="flex items-center justify-center h-64 text-gray-400 text-sm">Veri yok</div>
               )}
             </div>
+          </div>
+
+          {/* Mağaza Tipine Göre Satış */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div className="font-semibold text-gray-800">Mağaza Tipine Göre Satış</div>
+              <div className="text-xs text-gray-400">{stats.storeTypes.length} tip</div>
+            </div>
+
+            {/* Tip kartları */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4">
+              {stats.storeTypes.map(t => (
+                <div key={t.type} className="rounded-xl border border-gray-200 p-4" style={{ borderTop: `3px solid ${t.color}` }}>
+                  <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: t.color }}>{t.type}</div>
+                  <div className="text-2xl font-black text-gray-800 leading-none">{formatNum(t.qty)}</div>
+                  <div className="text-xs text-gray-400 mb-2">adet · %{t.shareQty.toFixed(1)}</div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Ciro</span>
+                    <span className="font-bold text-gray-700">{formatTL(t.rev)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs mt-0.5">
+                    <span className="text-gray-500">Mağaza</span>
+                    <span className="font-bold text-gray-700">{formatNum(t.stores)}</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full mt-2 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${t.shareQty}%`, background: t.color }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Özet tablo */}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                  <th className="px-4 py-2 text-left">Tip</th>
+                  <th className="px-4 py-2 text-right">Adet</th>
+                  <th className="px-4 py-2 text-right">Ciro</th>
+                  <th className="px-4 py-2 text-right">Mağaza</th>
+                  <th className="px-4 py-2 text-right">Adet Payı</th>
+                  <th className="px-4 py-2 text-right">Ciro Payı</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.storeTypes.map(t => (
+                  <tr key={t.type} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-2.5">
+                      <span className="inline-flex items-center gap-2 font-medium text-gray-800">
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ background: t.color }} />{t.type}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-bold text-gray-800">{formatNum(t.qty)}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-600">{formatTL(t.rev)}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-600">{formatNum(t.stores)}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-500">%{t.shareQty.toFixed(1)}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-500">%{t.shareRev.toFixed(1)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold">
+                  <td className="px-4 py-2.5 text-gray-800">TOPLAM</td>
+                  <td className="px-4 py-2.5 text-right text-gray-900">{formatNum(stats.totalQty)}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-900">{formatTL(stats.totalRev)}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-900">{formatNum(stats.totalStores)}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-400">%100</td>
+                  <td className="px-4 py-2.5 text-right text-gray-400">%100</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </>
       )}
