@@ -545,54 +545,7 @@ app.post('/api/fix-date-format', async (req, res) => {
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString(), env: CONFIG.NODE_ENV }));
 
-// StoreType dağılımı + örnek StoreName'ler (mağaza tipi gruplama için)
-app.get('/api/debug/store-type', async (req, res) => {
-  try {
-    const dagilim = await pool.query(`
-      SELECT "StoreType", COUNT(*) AS kayit, COUNT(DISTINCT "StoreNumber") AS magaza
-      FROM gunluk_satis GROUP BY "StoreType" ORDER BY kayit DESC
-    `);
-    const ornek = await pool.query(`
-      SELECT DISTINCT "StoreType", "StoreName" FROM gunluk_satis
-      ORDER BY "StoreType", "StoreName" LIMIT 60
-    `);
-    res.json({ dagilim: dagilim.rows, ornekler: ornek.rows });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
 // ========== EMAIL ==========
-
-app.get('/api/debug/stok-schema', async (req, res) => {
-  try {
-    const colRes = await pool.query(`
-      SELECT column_name, data_type FROM information_schema.columns
-      WHERE table_name = 'stok' ORDER BY ordinal_position
-    `);
-    const sample = await pool.query(`SELECT * FROM stok LIMIT 1`);
-    res.json({ columns: colRes.rows, sample: sample.rows[0] || null });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// DEPO_TUR dağılımı + DM adayı teslim noktaları
-app.get('/api/debug/depo-tur', async (req, res) => {
-  try {
-    const latest = await pool.query(`SELECT MAX(veri_tarihi) AS son FROM stok`);
-    const son = latest.rows[0]?.son;
-    const dagilim = await pool.query(`
-      SELECT "DEPO_TUR", COUNT(*) AS kayit, COUNT(DISTINCT "TESLIM_NOKTASI_ID") AS nokta
-      FROM stok WHERE veri_tarihi = $1 GROUP BY "DEPO_TUR" ORDER BY kayit DESC
-    `, [son]);
-    const dmAday = await pool.query(`
-      SELECT DISTINCT "DEPO_TUR", "TESLIM_NOKTASI_ID", "TESLIM_NOKTASI_ACIKLAMA"
-      FROM stok WHERE veri_tarihi = $1
-        AND (UPPER("TESLIM_NOKTASI_ACIKLAMA") LIKE '%DA%TIM%'
-             OR UPPER("TESLIM_NOKTASI_ACIKLAMA") LIKE '%DEPO%'
-             OR "DEPO_TUR" <> 'MA')
-      ORDER BY "DEPO_TUR", "TESLIM_NOKTASI_ACIKLAMA" LIMIT 50
-    `, [son]);
-    res.json({ veri_tarihi: son, dagilim: dagilim.rows, dm_adaylari: dmAday.rows });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
 
 app.post('/api/trigger-email', async (req, res) => {
   const apiKey   = process.env.RESEND_API_KEY;
