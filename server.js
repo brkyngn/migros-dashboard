@@ -545,6 +545,21 @@ app.post('/api/fix-date-format', async (req, res) => {
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString(), env: CONFIG.NODE_ENV }));
 
+// StoreType dağılımı + örnek StoreName'ler (mağaza tipi gruplama için)
+app.get('/api/debug/store-type', async (req, res) => {
+  try {
+    const dagilim = await pool.query(`
+      SELECT "StoreType", COUNT(*) AS kayit, COUNT(DISTINCT "StoreNumber") AS magaza
+      FROM gunluk_satis GROUP BY "StoreType" ORDER BY kayit DESC
+    `);
+    const ornek = await pool.query(`
+      SELECT DISTINCT "StoreType", "StoreName" FROM gunluk_satis
+      ORDER BY "StoreType", "StoreName" LIMIT 60
+    `);
+    res.json({ dagilim: dagilim.rows, ornekler: ornek.rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ========== EMAIL ==========
 
 app.get('/api/debug/stok-schema', async (req, res) => {
