@@ -3,6 +3,7 @@ const TITLES: Record<string, string> = {
   'daily-report': 'Günlük Satış',
   'daily-stock': 'Günlük Stok',
   'stock-comparison': 'Stok Karşılaştırma',
+  'store-types': 'Mağaza Tipi',
   sales: 'Satış Performansı',
   'stock-alerts': 'Stok Uyarıları',
   turnover: 'Devir Hızı',

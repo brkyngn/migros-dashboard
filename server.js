@@ -292,6 +292,71 @@ app.get('/api/db-ozet', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Mağaza tipini (MM/MMM/5M/Macrocenter) isim kolonundan çıkaran SQL CASE.
+// Sıra önemli: MACROCENTER, M'den; MMM, MM'den önce (Postgres \y = kelime sınırı).
+function tipCase(col) {
+  return `CASE
+    WHEN ${col} ~* 'MACRO ?CENTER' OR ${col} ~* '\\yMACRO\\y' THEN 'Macrocenter'
+    WHEN ${col} ~* '\\y5M\\y'  THEN '5M'
+    WHEN ${col} ~* '\\yMMM\\y' THEN 'MMM'
+    WHEN ${col} ~* '\\yMM\\y'  THEN 'MM'
+    WHEN ${col} ~* '\\yM\\y'   THEN 'M'
+    ELSE 'Diğer' END`;
+}
+
+// Mağaza tipine göre birleşik özet: toplam satış + günlük satış + stok + raf boş
+app.get('/api/magaza-tipi', async (req, res) => {
+  try {
+    const stokTarihiRes = await pool.query(`SELECT MAX(veri_tarihi) AS son FROM stok`);
+    const stokTarihi = stokTarihiRes.rows[0]?.son || null;
+    const satisTarihiRes = await pool.query(`SELECT MAX("DateTransaction") AS son FROM gunluk_satis WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'`);
+    const satisTarihi = satisTarihiRes.rows[0]?.son || null;
+
+    // Toplam satış (tüm zamanlar)
+    const satisToplam = await pool.query(`
+      SELECT ${tipCase('"StoreName"')} AS tip,
+             SUM(CAST("QuantitySold"  AS FLOAT)) AS qty,
+             SUM(CAST("NetSalesValue" AS FLOAT)) AS rev,
+             COUNT(DISTINCT "StoreNumber")       AS magaza
+      FROM gunluk_satis
+      WHERE "QuantitySold" ~ '^-?[0-9.]+$' AND "NetSalesValue" ~ '^-?[0-9.]+$'
+      GROUP BY 1
+    `);
+
+    // Günlük satış (en son tarih)
+    const satisGunluk = satisTarihi ? await pool.query(`
+      SELECT ${tipCase('"StoreName"')} AS tip,
+             SUM(CAST("QuantitySold"  AS FLOAT)) AS qty,
+             SUM(CAST("NetSalesValue" AS FLOAT)) AS rev,
+             COUNT(DISTINCT "StoreNumber")       AS magaza
+      FROM gunluk_satis
+      WHERE "DateTransaction" = $1
+        AND "QuantitySold" ~ '^-?[0-9.]+$' AND "NetSalesValue" ~ '^-?[0-9.]+$'
+      GROUP BY 1
+    `, [satisTarihi]) : { rows: [] };
+
+    // Stok (en son tarih, yalnızca mağazalar DEPO_TUR='MA')
+    const stok = stokTarihi ? await pool.query(`
+      SELECT ${tipCase('"TESLIM_NOKTASI_ACIKLAMA"')} AS tip,
+             SUM(CAST("STOK_MIKTARI" AS FLOAT)) AS stok,
+             SUM(CAST("STOK_TUTARI"  AS FLOAT)) AS tutar,
+             COUNT(DISTINCT "TESLIM_NOKTASI_ID") AS magaza,
+             COUNT(DISTINCT CASE WHEN CAST("STOK_MIKTARI" AS FLOAT) = 0 THEN "TESLIM_NOKTASI_ID" END) AS raf_bos
+      FROM stok
+      WHERE veri_tarihi = $1 AND "DEPO_TUR" = 'MA'
+        AND "STOK_MIKTARI" ~ '^-?[0-9.]+$'
+      GROUP BY 1
+    `, [stokTarihi]) : { rows: [] };
+
+    res.json({
+      satisTarihi, stokTarihi,
+      satisToplam: satisToplam.rows,
+      satisGunluk: satisGunluk.rows,
+      stok: stok.rows,
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Stok karşılaştırma — iki tarih arasındaki farklar
 app.get('/api/stok-karsilastirma', async (req, res) => {
   try {
