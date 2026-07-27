@@ -98,6 +98,22 @@ function locType(row: RawStock): LocType {
   return 'magaza';
 }
 
+// Mağaza tipini teslim noktası adından çıkar (MMM, MM'den; Macrocenter, M'den önce)
+function getStoreType(name: string): string {
+  const n = (name || '').toUpperCase();
+  if (/\bMACRO ?CENTER\b/.test(n) || /\bMACRO\b/.test(n)) return 'Macrocenter';
+  if (/\b5M\b/.test(n))  return '5M';
+  if (/\bMMM\b/.test(n)) return 'MMM';
+  if (/\bMM\b/.test(n))  return 'MM';
+  if (/\bM\b/.test(n))   return 'M';
+  return 'Diğer';
+}
+const TYPE_ORDER = ['MMM', 'MM', '5M', 'Macrocenter', 'M', 'Diğer'];
+const TYPE_COLORS: Record<string, string> = {
+  'MMM': '#C0392B', 'MM': '#1A3A5C', '5M': '#F5A623',
+  'Macrocenter': '#6D28D9', 'M': '#0891B2', 'Diğer': '#6b7280',
+};
+
 function formatDateTR(d: string) {
   if (!d) return '';
   const [y, m, day] = d.split('-');
@@ -503,6 +519,12 @@ export default function StockComparison() {
             </div>
           </section>
 
+          {/* ── MAĞAZA TİPİNE GÖRE STOK ── */}
+          <section>
+            <SectionHead color="#2563eb">Mağaza Tipine Göre Güncel Stok (MM / MMM / 5M / Macrocenter)</SectionHead>
+            <StoreTypeTable products={products} />
+          </section>
+
           {/* ── DM ANALİZİ ── */}
           <section>
             <SectionHead color="#d97706">Dağıtım Merkezleri (DM) — Toplam Stok & Değişim</SectionHead>
@@ -596,6 +618,113 @@ function Tag({ color, children }: { color: string; children: React.ReactNode }) 
       style={{ background: color + '18', color }}>
       {children}
     </span>
+  );
+}
+
+function StoreTypeTable({ products }: { products: ProductInfo[] }) {
+  // tip → ürün kısa adı → { eski, yeni, magazalar:Set, rafBos }
+  type Agg = { eski: number; yeni: number; magazalar: Set<string>; rafBos: number };
+  const map: Record<string, Record<string, Agg>> = {};
+
+  products.forEach(p => {
+    p.locations.filter(l => l.tur === 'magaza').forEach(l => {
+      const t = getStoreType(l.teslimNoktasi);
+      if (!map[t]) map[t] = {};
+      if (!map[t][p.shortName]) map[t][p.shortName] = { eski: 0, yeni: 0, magazalar: new Set(), rafBos: 0 };
+      const a = map[t][p.shortName];
+      a.eski += l.eskiStok;
+      a.yeni += l.yeniStok;
+      a.magazalar.add(l.teslimNoktasiId);
+      if (l.yeniStok === 0) a.rafBos++;
+    });
+  });
+
+  const tipler = TYPE_ORDER.filter(t => map[t]);
+  if (!tipler.length) return null;
+
+  // tipteki toplam mağaza sayısı (ürünler arası birleşik)
+  const magazaSayisi = (t: string) => {
+    const s = new Set<string>();
+    Object.values(map[t]).forEach(a => a.magazalar.forEach(id => s.add(id)));
+    return s.size;
+  };
+
+  const cell = (a?: Agg) => {
+    if (!a) return <><td className="px-3 py-2 text-right font-mono text-gray-300">—</td><td className="px-3 py-2 text-right font-mono text-gray-300">—</td><td className="px-3 py-2 text-right font-mono text-gray-300">—</td></>;
+    const fark = a.yeni - a.eski;
+    const farkColor = fark > 0 ? 'text-green-600' : fark < 0 ? 'text-red-600' : 'text-gray-400';
+    return (
+      <>
+        <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(Math.round(a.eski))}</td>
+        <td className="px-3 py-2 text-right font-mono text-gray-800 font-semibold">{formatNum(Math.round(a.yeni))}</td>
+        <td className={`px-3 py-2 text-right font-mono font-bold ${farkColor}`}>{fark >= 0 ? '+' : ''}{formatNum(Math.round(fark))}</td>
+      </>
+    );
+  };
+
+  // Alt toplam
+  const totals = products.map(p => {
+    let eski = 0, yeni = 0;
+    tipler.forEach(t => { const a = map[t][p.shortName]; if (a) { eski += a.eski; yeni += a.yeni; } });
+    return { short: p.shortName, eski, yeni, fark: yeni - eski };
+  });
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+      <table className="w-full text-xs min-w-[620px]">
+        <thead>
+          <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide">
+            <th className="px-4 py-2.5 text-left font-semibold" rowSpan={2}>Mağaza Tipi</th>
+            <th className="px-3 py-2.5 text-right font-semibold" rowSpan={2}>Mağaza</th>
+            <th className="px-3 py-2.5 text-right font-semibold" rowSpan={2}>Raf Boş</th>
+            {products.map(p => (
+              <th key={p.kod} colSpan={3} className="px-3 py-2 text-center font-semibold border-l border-gray-100" style={{ color: p.color }}>{p.shortName}</th>
+            ))}
+          </tr>
+          <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+            {products.map(p => (
+              <Fragment key={p.kod}>
+                <th className="px-3 py-1.5 text-right font-semibold border-l border-gray-100">Eski</th>
+                <th className="px-3 py-1.5 text-right font-semibold">Yeni</th>
+                <th className="px-3 py-1.5 text-right font-semibold">Fark</th>
+              </Fragment>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {tipler.map(t => {
+            const rafBosTop = Object.values(map[t]).reduce((s, a) => s + a.rafBos, 0);
+            return (
+              <tr key={t} className="border-t border-gray-50 hover:bg-gray-50">
+                <td className="px-4 py-2 font-medium">
+                  <span className="inline-flex items-center gap-2 text-gray-800">
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: TYPE_COLORS[t] }} />{t}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-gray-600">{magazaSayisi(t)}</td>
+                <td className={`px-3 py-2 text-right font-mono font-bold ${rafBosTop > 0 ? 'text-red-600' : 'text-gray-400'}`}>{rafBosTop}</td>
+                {products.map(p => (
+                  <Fragment key={p.kod}>{cell(map[t][p.shortName])}</Fragment>
+                ))}
+              </tr>
+            );
+          })}
+          <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold">
+            <td className="px-4 py-2.5 text-gray-800" colSpan={3}>TOPLAM ({tipler.length} tip)</td>
+            {totals.map(t => {
+              const farkColor = t.fark > 0 ? 'text-green-600' : t.fark < 0 ? 'text-red-600' : 'text-gray-400';
+              return (
+                <Fragment key={t.short}>
+                  <td className="px-3 py-2.5 text-right font-mono text-gray-500">{formatNum(Math.round(t.eski))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-gray-800">{formatNum(Math.round(t.yeni))}</td>
+                  <td className={`px-3 py-2.5 text-right font-mono ${farkColor}`}>{t.fark >= 0 ? '+' : ''}{formatNum(Math.round(t.fark))}</td>
+                </Fragment>
+              );
+            })}
+          </tr>
+        </tbody>
+      </table>
+    </div>
   );
 }
 
