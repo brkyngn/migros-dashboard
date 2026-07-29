@@ -42,6 +42,8 @@ interface Agg {
   qty: number; rev: number; stok: number; rafBos: number;
 }
 
+type Gruplama = 'bolge-tip' | 'tip-bolge';
+
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
 const PERIYOTLAR = [
@@ -60,6 +62,11 @@ const TYPE_COLORS: Record<string, string> = {
   'MMM': '#C0392B', 'MM': '#1A3A5C', '5M': '#F5A623', 'Macrocenter': '#6D28D9',
 };
 const TYPE_ORDER = ['MMM', 'MM', '5M', 'Macrocenter'];
+
+const GRUPLAMALAR: { id: Gruplama; label: string; baslik: string; sutun: string }[] = [
+  { id: 'bolge-tip', label: '🗺️ Bölge → Tip', baslik: 'Coğrafi Bölge → Mağaza Tipi → Mağaza', sutun: 'Bölge / Tip / Mağaza' },
+  { id: 'tip-bolge', label: '🏬 Tip → Bölge', baslik: 'Mağaza Tipi → Coğrafi Bölge → Mağaza', sutun: 'Tip / Bölge / Mağaza' },
+];
 
 const num = (v: number | string | null | undefined) => Number(v || 0);
 
@@ -92,6 +99,7 @@ export default function Availability() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [durumFiltre, setDurumFiltre] = useState<Durum | 'hepsi'>('hepsi');
   const [arama, setArama] = useState('');
+  const [gruplama, setGruplama] = useState<Gruplama>('bolge-tip');
 
   useEffect(() => {
     setLoading(true); setError('');
@@ -136,30 +144,41 @@ export default function Availability() {
     return a;
   }, [filtered]);
 
-  // Ağaç: bölge → tip → mağaza
+  // Ağaç: seçilen gruplamaya göre iki seviye (bölge→tip veya tip→bölge), altında mağazalar
+  const tipUstte = gruplama === 'tip-bolge';
+
   const tree = useMemo(() => {
-    const bolgeMap: Record<string, { agg: Agg; tipler: Record<string, { agg: Agg; magazalar: SRow[] }> }> = {};
+    const key1 = (s: SRow) => tipUstte ? (s.tip || 'Diğer') : (s.bolge || 'Bilinmiyor');
+    const key2 = (s: SRow) => tipUstte ? (s.bolge || 'Bilinmiyor') : (s.tip || 'Diğer');
+
+    const map: Record<string, { agg: Agg; alt: Record<string, { agg: Agg; magazalar: SRow[] }> }> = {};
     filtered.forEach(s => {
-      const b = s.bolge || 'Bilinmiyor';
-      const t = s.tip || 'Diğer';
-      if (!bolgeMap[b]) bolgeMap[b] = { agg: emptyAgg(), tipler: {} };
-      if (!bolgeMap[b].tipler[t]) bolgeMap[b].tipler[t] = { agg: emptyAgg(), magazalar: [] };
-      addToAgg(bolgeMap[b].agg, s);
-      addToAgg(bolgeMap[b].tipler[t].agg, s);
-      bolgeMap[b].tipler[t].magazalar.push(s);
+      const k1 = key1(s), k2 = key2(s);
+      if (!map[k1]) map[k1] = { agg: emptyAgg(), alt: {} };
+      if (!map[k1].alt[k2]) map[k1].alt[k2] = { agg: emptyAgg(), magazalar: [] };
+      addToAgg(map[k1].agg, s);
+      addToAgg(map[k1].alt[k2].agg, s);
+      map[k1].alt[k2].magazalar.push(s);
     });
-    return Object.entries(bolgeMap)
-      .map(([bolge, d]) => ({
-        bolge, agg: d.agg,
-        tipler: Object.entries(d.tipler)
-          .map(([tip, td]) => ({
-            tip, agg: td.agg,
+
+    // Tip seviyesi sabit sırada, bölge seviyesi satış adedine göre
+    const sortNodes = <T extends { ad: string; agg: Agg }>(nodes: T[], tipSeviyesi: boolean) =>
+      nodes.sort((a, b) => tipSeviyesi
+        ? TYPE_ORDER.indexOf(a.ad) - TYPE_ORDER.indexOf(b.ad)
+        : b.agg.qty - a.agg.qty || a.ad.localeCompare(b.ad, 'tr'));
+
+    return sortNodes(
+      Object.entries(map).map(([ad, d]) => ({
+        ad, agg: d.agg,
+        alt: sortNodes(
+          Object.entries(d.alt).map(([ad2, td]) => ({
+            ad: ad2, agg: td.agg,
             magazalar: td.magazalar.sort((a, b) => b.qty - a.qty || a.magaza_adi.localeCompare(b.magaza_adi, 'tr')),
-          }))
-          .sort((a, b) => TYPE_ORDER.indexOf(a.tip) - TYPE_ORDER.indexOf(b.tip)),
-      }))
-      .sort((a, b) => b.agg.qty - a.agg.qty || a.bolge.localeCompare(b.bolge, 'tr'));
-  }, [filtered]);
+          })),
+          !tipUstte),
+      })),
+      tipUstte);
+  }, [filtered, tipUstte]);
 
   const toggle = (key: string) => setExpanded(e => {
     const n = new Set(e);
@@ -168,6 +187,8 @@ export default function Availability() {
   });
 
   const pct = (a: Agg) => a.toplam > 0 ? a.bulunan / a.toplam * 100 : 0;
+
+  const gruplamaInfo = GRUPLAMALAR.find(g => g.id === gruplama)!;
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -222,6 +243,18 @@ export default function Availability() {
           })}
         </div>
 
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+          {GRUPLAMALAR.map(g => (
+            <button key={g.id}
+              onClick={() => { setGruplama(g.id); setExpanded(new Set()); }}
+              title={g.baslik}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all
+                ${gruplama === g.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+              {g.label}
+            </button>
+          ))}
+        </div>
+
         <input value={arama} onChange={e => setArama(e.target.value)} placeholder="Mağaza veya il ara..."
           className="bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-gray-400 w-52" />
 
@@ -266,13 +299,13 @@ export default function Availability() {
       {/* Ağaç tablo */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-          <div className="font-semibold text-gray-800">Coğrafi Bölge → Mağaza Tipi → Mağaza</div>
+          <div className="font-semibold text-gray-800">{gruplamaInfo.baslik}</div>
           <div className="text-xs text-gray-400">Satıra tıklayarak kır</div>
         </div>
         <table className="w-full text-xs min-w-[760px]">
           <thead>
             <tr className="bg-gray-50 text-gray-500 uppercase tracking-wide">
-              <th className="px-4 py-2.5 text-left font-semibold">Bölge / Tip / Mağaza</th>
+              <th className="px-4 py-2.5 text-left font-semibold">{gruplamaInfo.sutun}</th>
               <th className="px-3 py-2.5 text-right font-semibold">Mağaza</th>
               <th className="px-3 py-2.5 text-right font-semibold">Bulunurluk</th>
               <th className="px-3 py-2.5 text-right font-semibold">Dönem Adet</th>
@@ -284,15 +317,15 @@ export default function Availability() {
           </thead>
           <tbody>
             {tree.map(b => {
-              const bOpen = expanded.has(b.bolge);
+              const bOpen = expanded.has(b.ad);
               return (
-                <Fragment key={b.bolge}>
-                  {/* Bölge */}
-                  <tr onClick={() => toggle(b.bolge)}
+                <Fragment key={b.ad}>
+                  {/* 1. seviye */}
+                  <tr onClick={() => toggle(b.ad)}
                     className="border-t border-gray-100 bg-gray-50/60 hover:bg-gray-100 cursor-pointer font-semibold">
                     <td className="px-4 py-2.5 text-gray-800">
                       <span className={`inline-block w-3 text-gray-400 transition-transform ${bOpen ? 'rotate-90' : ''}`}>▸</span>
-                      <span className="ml-1">🗺️ {b.bolge}</span>
+                      <span className="ml-1"><NodeLabel ad={b.ad} tip={tipUstte} /></span>
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono text-gray-600">{b.agg.bulunan}/{b.agg.toplam}</td>
                     <td className="px-3 py-2.5 text-right">
@@ -305,9 +338,9 @@ export default function Availability() {
                     <td className="px-3 py-2.5"></td>
                   </tr>
 
-                  {/* Tipler */}
-                  {bOpen && b.tipler.map(t => {
-                    const tKey = b.bolge + '|' + t.tip;
+                  {/* 2. seviye */}
+                  {bOpen && b.alt.map(t => {
+                    const tKey = b.ad + '|' + t.ad;
                     const tOpen = expanded.has(tKey);
                     return (
                       <Fragment key={tKey}>
@@ -315,10 +348,7 @@ export default function Availability() {
                           className="border-t border-gray-50 hover:bg-gray-50 cursor-pointer">
                           <td className="px-4 py-2 pl-10 text-gray-700 font-medium">
                             <span className={`inline-block w-3 text-gray-400 transition-transform ${tOpen ? 'rotate-90' : ''}`}>▸</span>
-                            <span className="ml-1 inline-flex items-center gap-1.5">
-                              <span className="w-2.5 h-2.5 rounded-full" style={{ background: TYPE_COLORS[t.tip] || '#6b7280' }} />
-                              {t.tip}
-                            </span>
+                            <span className="ml-1"><NodeLabel ad={t.ad} tip={!tipUstte} /></span>
                           </td>
                           <td className="px-3 py-2 text-right font-mono text-gray-600">{t.agg.bulunan}/{t.agg.toplam}</td>
                           <td className="px-3 py-2 text-right"><BulunurlukBar pct={pct(t.agg)} /></td>
@@ -367,7 +397,7 @@ export default function Availability() {
 
             {/* Genel toplam */}
             <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold">
-              <td className="px-4 py-2.5 text-gray-800">TOPLAM ({tree.length} bölge)</td>
+              <td className="px-4 py-2.5 text-gray-800">TOPLAM ({tree.length} {tipUstte ? 'tip' : 'bölge'})</td>
               <td className="px-3 py-2.5 text-right font-mono text-gray-900">{total.bulunan}/{total.toplam}</td>
               <td className="px-3 py-2.5 text-right"><BulunurlukBar pct={pct(total)} /></td>
               <td className="px-3 py-2.5 text-right font-mono text-gray-900">{formatNum(Math.round(total.qty))}</td>
@@ -387,6 +417,17 @@ export default function Availability() {
 }
 
 // ─── Alt bileşen ─────────────────────────────────────────────────────────────
+
+// Seviye etiketi: mağaza tipi renkli nokta ile, coğrafi bölge harita ikonuyla
+function NodeLabel({ ad, tip }: { ad: string; tip: boolean }) {
+  if (!tip) return <>🗺️ {ad}</>;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="w-2.5 h-2.5 rounded-full" style={{ background: TYPE_COLORS[ad] || '#6b7280' }} />
+      {ad}
+    </span>
+  );
+}
 
 function BulunurlukBar({ pct }: { pct: number }) {
   const color = pct >= 80 ? '#16a34a' : pct >= 50 ? '#d97706' : '#dc2626';
