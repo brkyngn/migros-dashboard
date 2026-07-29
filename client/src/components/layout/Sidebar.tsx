@@ -13,6 +13,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'daily-stock',      icon: '📦', label: 'Günlük Stok' },
       { id: 'stock-comparison', icon: '📊', label: 'Stok Karşılaştırma' },
       { id: 'store-types',      icon: '🏬', label: 'Mağaza Tipi' },
+      { id: 'availability',     icon: '🗺️', label: 'Bulunurluk' },
       { id: 'sales',            icon: '📈', label: 'Satış Performansı' },
       { id: 'stock-alerts',     icon: '⚠️', label: 'Stok Uyarıları' },
       { id: 'turnover',         icon: '🔄', label: 'Devir Hızı' },

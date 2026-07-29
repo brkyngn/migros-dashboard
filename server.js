@@ -381,6 +381,94 @@ app.get('/api/magaza-tipi', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── BULUNURLUK RAPORU ────────────────────────────────────────────────────────
+// Hedef evren: magazalar tablosundaki MM / MMM / 5M / MACRO mağazaları.
+// Her mağaza için: seçili dönem satışı, tüm zaman satışı, güncel stok.
+// Durum: bulunuyor (dönemde satış veya stok>0) / daha_once (eskiden satış) / hic
+const BULUNURLUK_TIPLER = ['MM', 'MMM', '5M', 'MACRO', 'MACROCENTER'];
+const PERIYOT_GUN = { gun: 0, '7gun': 6, ay: 29 };
+
+app.get('/api/bulunurluk', async (req, res) => {
+  try {
+    const periyot = PERIYOT_GUN[req.query.periyot] !== undefined ? req.query.periyot : 'gun';
+    const geriGun = PERIYOT_GUN[periyot];
+
+    const satisSonRes = await pool.query(`
+      SELECT MAX("DateTransaction") AS son FROM gunluk_satis
+      WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'
+    `);
+    const satisSon = satisSonRes.rows[0]?.son || null;
+    const stokSonRes = await pool.query(`SELECT MAX(veri_tarihi) AS son FROM stok`);
+    const stokTarihi = stokSonRes.rows[0]?.son || null;
+
+    if (!satisSon) {
+      return res.json({ periyot, baslangic: null, bitis: null, stokTarihi, magazalar: [] });
+    }
+    // Dönem başlangıcı = son satış tarihi - geriGun
+    const basRes = await pool.query(`SELECT ($1::date - $2::int)::text AS bas`, [satisSon, geriGun]);
+    const baslangic = basRes.rows[0].bas;
+
+    const rows = await pool.query(`
+      WITH hedef AS (
+        SELECT teslim_noktasi_id AS id, magaza_adi, il, bolge,
+               UPPER(tip) AS tip_ham,
+               ${normMagazaTip('tip')} AS tip
+        FROM magazalar
+        WHERE UPPER(tip) = ANY($3)
+      ),
+      s_donem AS (
+        SELECT "StoreNumber" AS id,
+               SUM(CAST("QuantitySold"  AS FLOAT)) AS qty,
+               SUM(CAST("NetSalesValue" AS FLOAT)) AS rev,
+               COUNT(DISTINCT "DateTransaction")   AS gun_sayisi
+        FROM gunluk_satis
+        WHERE "DateTransaction" >= $1 AND "DateTransaction" <= $2
+          AND "QuantitySold" ~ '^-?[0-9.]+$' AND "NetSalesValue" ~ '^-?[0-9.]+$'
+        GROUP BY 1
+      ),
+      s_tum AS (
+        SELECT "StoreNumber" AS id,
+               SUM(CAST("QuantitySold"  AS FLOAT)) AS qty,
+               SUM(CAST("NetSalesValue" AS FLOAT)) AS rev,
+               MAX("DateTransaction")              AS son_satis
+        FROM gunluk_satis
+        WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'
+          AND "QuantitySold" ~ '^-?[0-9.]+$' AND "NetSalesValue" ~ '^-?[0-9.]+$'
+        GROUP BY 1
+      ),
+      st AS (
+        SELECT "TESLIM_NOKTASI_ID" AS id,
+               SUM(CAST("STOK_MIKTARI" AS FLOAT)) AS stok,
+               SUM(CAST("STOK_TUTARI"  AS FLOAT)) AS tutar
+        FROM stok
+        WHERE veri_tarihi = $4 AND "STOK_MIKTARI" ~ '^-?[0-9.]+$'
+        GROUP BY 1
+      )
+      SELECT h.id, h.magaza_adi, h.il, h.bolge, h.tip,
+             COALESCE(d.qty, 0)  AS donem_qty,
+             COALESCE(d.rev, 0)  AS donem_rev,
+             COALESCE(d.gun_sayisi, 0) AS satis_gun,
+             COALESCE(t.qty, 0)  AS tum_qty,
+             COALESCE(t.rev, 0)  AS tum_rev,
+             t.son_satis,
+             st.stok, st.tutar AS stok_tutar,
+             (st.id IS NOT NULL) AS stok_kaydi_var
+      FROM hedef h
+      LEFT JOIN s_donem d ON d.id = h.id
+      LEFT JOIN s_tum   t ON t.id = h.id
+      LEFT JOIN st        ON st.id = h.id
+    `, [baslangic, satisSon, BULUNURLUK_TIPLER, stokTarihi]);
+
+    res.json({
+      periyot, baslangic, bitis: satisSon, stokTarihi,
+      magazalar: rows.rows,
+    });
+  } catch(e) {
+    console.error('bulunurluk hata:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Stok karşılaştırma — iki tarih arasındaki farklar
 app.get('/api/stok-karsilastirma', async (req, res) => {
   try {

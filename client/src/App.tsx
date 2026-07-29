@@ -10,6 +10,7 @@ import DailyReport from './pages/DailyReport';
 import DailyStock from './pages/DailyStock';
 import StockComparison from './pages/StockComparison';
 import StoreTypes from './pages/StoreTypes';
+import Availability from './pages/Availability';
 import Expenses from './pages/Expenses';
 import ProfitLoss from './pages/ProfitLoss';
 import FinanceSettings from './pages/FinanceSettings';
@@ -58,6 +59,7 @@ export default function App() {
           {page === 'daily-stock'      && <DailyStock />}
           {page === 'stock-comparison' && <StockComparison />}
           {page === 'store-types'      && <StoreTypes />}
+          {page === 'availability'     && <Availability />}
           {page === 'turnover'      && <TurnoverAnalysis />}
           {page === 'reports'       && <Reports />}
           {page === 'expenses'         && <Expenses />}
