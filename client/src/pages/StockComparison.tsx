@@ -16,6 +16,7 @@ interface RawStock {
   GUNLUK_SATIS_TUTARI: string;
   GUNLUK_YUKLEME_MIKTARI: string;
   DEPO_TUR?: string;
+  magaza_tipi?: string | null; // magazalar tablosundan gelen resmî tip (yoksa null)
 }
 
 type LocType = 'magaza' | 'dm' | 'iade' | 'bloke';
@@ -34,6 +35,7 @@ interface LocationDiff {
   gunlukYukleme: number;
   tur: LocType;
   dm: boolean; // tur === 'dm' kısayolu (geriye dönük uyum)
+  tip: string; // mağaza tipi: magazalar tablosu, yoksa isimden tahmin
 }
 
 interface ProductInfo {
@@ -202,6 +204,7 @@ export default function StockComparison() {
         gunlukYukleme: pf(newR?.GUNLUK_YUKLEME_MIKTARI || oldR?.GUNLUK_YUKLEME_MIKTARI),
         tur: locType(ref),
         dm: locType(ref) === 'dm',
+        tip: ref.magaza_tipi || getStoreType(ref.TESLIM_NOKTASI_ACIKLAMA),
       });
     });
 
@@ -631,7 +634,7 @@ function StoreTypeTable({ products }: { products: ProductInfo[] }) {
 
   products.forEach(p => {
     p.locations.filter(l => l.tur === 'magaza').forEach(l => {
-      const t = getStoreType(l.teslimNoktasi);
+      const t = l.tip;
       if (!map[t]) map[t] = {};
       if (!map[t][p.shortName]) map[t][p.shortName] = { eski: 0, yeni: 0, magazalar: new Set(), rafBos: 0 };
       const a = map[t][p.shortName];

@@ -231,13 +231,27 @@ app.get('/isleticirapor/*', (req, res) => {
 
 // ========== DB OKUMA ==========
 
+// Stok satırlarını magazalar tablosundan gelen resmî tiple zenginleştirir.
+// İsimden tahmin ETME: 'HİPER' kodlu gerçek 5M'ler isimlerinde 5M geçmeyebiliyor.
+// Eşleşme yoksa magaza_tipi null döner, istemci isimden tahmine düşer.
+function stokSelectSQL() {
+  return `
+    SELECT s.*,
+           CASE WHEN m.tip IS NOT NULL THEN ${normMagazaTip('m.tip')} ELSE NULL END AS magaza_tipi,
+           m.il AS magaza_il, m.bolge AS magaza_bolge
+    FROM stok s
+    LEFT JOIN magazalar m ON m.teslim_noktasi_id = s."TESLIM_NOKTASI_ID"
+    WHERE s.veri_tarihi = $1
+    ORDER BY s.id LIMIT 5000`;
+}
+
 app.get('/api/db-stok', async (req, res) => {
   try {
     // En güncel veri_tarihi'nin kayıtlarını getir
     const latest = await pool.query(`SELECT MAX(veri_tarihi) as son FROM stok`);
     const sonTarih = latest.rows[0]?.son;
     if (!sonTarih) return res.json([]);
-    const r = await pool.query('SELECT * FROM stok WHERE veri_tarihi = $1 ORDER BY id LIMIT 5000', [sonTarih]);
+    const r = await pool.query(stokSelectSQL(), [sonTarih]);
     res.json(r.rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -255,7 +269,7 @@ app.get('/api/db-stok-tarih', async (req, res) => {
   try {
     const { tarih } = req.query;
     if (!tarih) return res.status(400).json({ error: 'tarih parametresi gerekli' });
-    const r = await pool.query('SELECT * FROM stok WHERE veri_tarihi = $1 ORDER BY id LIMIT 5000', [tarih]);
+    const r = await pool.query(stokSelectSQL(), [tarih]);
     res.json(r.rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
