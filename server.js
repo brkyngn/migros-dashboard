@@ -304,6 +304,24 @@ function tipCase(col) {
     ELSE 'Diğer' END`;
 }
 
+// magazalar.tip (Excel F ham kod) → gösterim tipine normalize et
+function normMagazaTip(expr) {
+  return `CASE UPPER(${expr})
+    WHEN 'MACRO' THEN 'Macrocenter'
+    WHEN 'MACROCENTER' THEN 'Macrocenter'
+    WHEN 'MMM' THEN 'MMM'
+    WHEN 'MM'  THEN 'MM'
+    WHEN '5M'  THEN '5M'
+    WHEN 'M'   THEN 'M'
+    ELSE 'Diğer' END`;
+}
+
+// Önce magazalar tablosundaki kesin tipi kullan; eşleşme yoksa isim regex'ine düş.
+// mExpr = magazalar.tip alanı, nameCol = isim kolonu (fallback).
+function tipCoalesce(mExpr, nameCol) {
+  return `CASE WHEN ${mExpr} IS NOT NULL THEN ${normMagazaTip(mExpr)} ELSE ${tipCase(nameCol)} END`;
+}
+
 // Mağaza tipine göre birleşik özet: toplam satış + günlük satış + stok + raf boş
 app.get('/api/magaza-tipi', async (req, res) => {
   try {
@@ -312,39 +330,45 @@ app.get('/api/magaza-tipi', async (req, res) => {
     const satisTarihiRes = await pool.query(`SELECT MAX("DateTransaction") AS son FROM gunluk_satis WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'`);
     const satisTarihi = satisTarihiRes.rows[0]?.son || null;
 
+    const satisTip = tipCoalesce('m.tip', 'g."StoreName"');
+    const stokTip  = tipCoalesce('m.tip', 's."TESLIM_NOKTASI_ACIKLAMA"');
+
     // Toplam satış (tüm zamanlar)
     const satisToplam = await pool.query(`
-      SELECT ${tipCase('"StoreName"')} AS tip,
-             SUM(CAST("QuantitySold"  AS FLOAT)) AS qty,
-             SUM(CAST("NetSalesValue" AS FLOAT)) AS rev,
-             COUNT(DISTINCT "StoreNumber")       AS magaza
-      FROM gunluk_satis
-      WHERE "QuantitySold" ~ '^-?[0-9.]+$' AND "NetSalesValue" ~ '^-?[0-9.]+$'
+      SELECT ${satisTip} AS tip,
+             SUM(CAST(g."QuantitySold"  AS FLOAT)) AS qty,
+             SUM(CAST(g."NetSalesValue" AS FLOAT)) AS rev,
+             COUNT(DISTINCT g."StoreNumber")       AS magaza
+      FROM gunluk_satis g
+      LEFT JOIN magazalar m ON m.teslim_noktasi_id = g."StoreNumber"
+      WHERE g."QuantitySold" ~ '^-?[0-9.]+$' AND g."NetSalesValue" ~ '^-?[0-9.]+$'
       GROUP BY 1
     `);
 
     // Günlük satış (en son tarih)
     const satisGunluk = satisTarihi ? await pool.query(`
-      SELECT ${tipCase('"StoreName"')} AS tip,
-             SUM(CAST("QuantitySold"  AS FLOAT)) AS qty,
-             SUM(CAST("NetSalesValue" AS FLOAT)) AS rev,
-             COUNT(DISTINCT "StoreNumber")       AS magaza
-      FROM gunluk_satis
-      WHERE "DateTransaction" = $1
-        AND "QuantitySold" ~ '^-?[0-9.]+$' AND "NetSalesValue" ~ '^-?[0-9.]+$'
+      SELECT ${satisTip} AS tip,
+             SUM(CAST(g."QuantitySold"  AS FLOAT)) AS qty,
+             SUM(CAST(g."NetSalesValue" AS FLOAT)) AS rev,
+             COUNT(DISTINCT g."StoreNumber")       AS magaza
+      FROM gunluk_satis g
+      LEFT JOIN magazalar m ON m.teslim_noktasi_id = g."StoreNumber"
+      WHERE g."DateTransaction" = $1
+        AND g."QuantitySold" ~ '^-?[0-9.]+$' AND g."NetSalesValue" ~ '^-?[0-9.]+$'
       GROUP BY 1
     `, [satisTarihi]) : { rows: [] };
 
     // Stok (en son tarih, yalnızca mağazalar DEPO_TUR='MA')
     const stok = stokTarihi ? await pool.query(`
-      SELECT ${tipCase('"TESLIM_NOKTASI_ACIKLAMA"')} AS tip,
-             SUM(CAST("STOK_MIKTARI" AS FLOAT)) AS stok,
-             SUM(CAST("STOK_TUTARI"  AS FLOAT)) AS tutar,
-             COUNT(DISTINCT "TESLIM_NOKTASI_ID") AS magaza,
-             COUNT(DISTINCT CASE WHEN CAST("STOK_MIKTARI" AS FLOAT) = 0 THEN "TESLIM_NOKTASI_ID" END) AS raf_bos
-      FROM stok
-      WHERE veri_tarihi = $1 AND "DEPO_TUR" = 'MA'
-        AND "STOK_MIKTARI" ~ '^-?[0-9.]+$'
+      SELECT ${stokTip} AS tip,
+             SUM(CAST(s."STOK_MIKTARI" AS FLOAT)) AS stok,
+             SUM(CAST(s."STOK_TUTARI"  AS FLOAT)) AS tutar,
+             COUNT(DISTINCT s."TESLIM_NOKTASI_ID") AS magaza,
+             COUNT(DISTINCT CASE WHEN CAST(s."STOK_MIKTARI" AS FLOAT) = 0 THEN s."TESLIM_NOKTASI_ID" END) AS raf_bos
+      FROM stok s
+      LEFT JOIN magazalar m ON m.teslim_noktasi_id = s."TESLIM_NOKTASI_ID"
+      WHERE s.veri_tarihi = $1 AND s."DEPO_TUR" = 'MA'
+        AND s."STOK_MIKTARI" ~ '^-?[0-9.]+$'
       GROUP BY 1
     `, [stokTarihi]) : { rows: [] };
 
@@ -443,6 +467,81 @@ app.post('/api/import-excel-satis', async (req, res) => {
     console.error('import-excel-satis hata:', e.message);
     res.status(500).json({ success: false, message: e.message, inserted: 0 });
   }
+});
+
+// ── Mağaza referans listesi (Excel: MagazaListe) ─────────────────────────────
+async function ensureMagazalarTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS magazalar (
+      teslim_noktasi_id TEXT PRIMARY KEY,
+      tip         TEXT,   -- Excel F (ACIKLAMA): M, MM, MMM, MACRO, 5M, MJET, DEPO...
+      tip_kodu    TEXT,   -- Excel E (TIP) sayısal kod
+      tur         TEXT,   -- Excel H (ACIKLAMA1): MIGROS
+      magaza_adi  TEXT,
+      il          TEXT,
+      bolge       TEXT,
+      adres       TEXT,
+      tel         TEXT,
+      posta_kodu  TEXT,
+      enlem       TEXT,
+      boylam      TEXT,
+      harita_link TEXT,
+      updatedat   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+}
+
+app.post('/api/import-magaza-liste', async (req, res) => {
+  const data = req.body.data;
+  if (!data || !data.length) return res.json({ success: true, inserted: 0, updated: 0 });
+  try {
+    await ensureMagazalarTable();
+    let count = 0;
+    for (const r of data) {
+      const id = String(r.teslim_noktasi_id || '').trim();
+      if (!id) continue;
+      const q = await pool.query(`
+        INSERT INTO magazalar
+          (teslim_noktasi_id, tip, tip_kodu, tur, magaza_adi, il, bolge, adres, tel, posta_kodu, enlem, boylam, harita_link, updatedat)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, CURRENT_TIMESTAMP)
+        ON CONFLICT (teslim_noktasi_id) DO UPDATE SET
+          tip=$2, tip_kodu=$3, tur=$4, magaza_adi=$5, il=$6, bolge=$7, adres=$8,
+          tel=$9, posta_kodu=$10, enlem=$11, boylam=$12, harita_link=$13, updatedat=CURRENT_TIMESTAMP
+      `, [id, r.tip||null, r.tip_kodu||null, r.tur||null, r.magaza_adi||null, r.il||null,
+          r.bolge||null, r.adres||null, r.tel||null, r.posta_kodu||null, r.enlem||null,
+          r.boylam||null, r.harita_link||null]);
+      count += q.rowCount;
+    }
+    res.json({ success: true, saved: count });
+  } catch(e) {
+    console.error('import-magaza-liste hata:', e.message);
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// Mağaza listesi özeti (import doğrulaması için)
+app.get('/api/magaza-liste-ozet', async (req, res) => {
+  try {
+    await ensureMagazalarTable();
+    const toplam = await pool.query(`SELECT COUNT(*) AS cnt FROM magazalar`);
+    const tipler = await pool.query(`SELECT tip, COUNT(*) AS cnt FROM magazalar GROUP BY tip ORDER BY cnt DESC`);
+    // stok/satış eşleşme oranı
+    const stokMatch = await pool.query(`
+      SELECT COUNT(DISTINCT s."TESLIM_NOKTASI_ID") AS eslesen
+      FROM stok s JOIN magazalar m ON m.teslim_noktasi_id = s."TESLIM_NOKTASI_ID"
+      WHERE s.veri_tarihi = (SELECT MAX(veri_tarihi) FROM stok)
+    `);
+    const satisMatch = await pool.query(`
+      SELECT COUNT(DISTINCT g."StoreNumber") AS eslesen
+      FROM gunluk_satis g JOIN magazalar m ON m.teslim_noktasi_id = g."StoreNumber"
+    `);
+    res.json({
+      toplam: parseInt(toplam.rows[0].cnt) || 0,
+      tipler: tipler.rows,
+      stokEslesen: parseInt(stokMatch.rows[0]?.eslesen) || 0,
+      satisEslesen: parseInt(satisMatch.rows[0]?.eslesen) || 0,
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/kaydet-gunluk', async (req, res) => {

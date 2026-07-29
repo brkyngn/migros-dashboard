@@ -115,6 +115,22 @@
                 <div id="excelPreview" style="margin-top:.75rem;font-size:.8rem;color:#374151;"></div>
             </div>
 
+            <!-- Mağaza Listesi Import -->
+            <div class="card" style="margin-bottom:1rem;border:2px dashed #a5b4fc;">
+                <h2 style="margin-bottom:.75rem;font-size:.95rem;">🏬 Mağaza Listesi İçe Aktar (Tip & Adres)</h2>
+                <p style="font-size:.8rem;color:#6b7280;margin-bottom:1rem;">
+                    Migros mağaza listesi Excel'ini (MagazaListe) yükle. Her mağazanın <b>tipi (M/MM/MMM/5M/MACRO)</b>, ili, adresi ve koordinatı <code>magazalar</code> tablosuna kaydedilir. Teslim Noktası ID ile stok/satış eşleşir.
+                </p>
+                <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap;">
+                    <input type="file" id="magazaFileInput" accept=".xlsx,.xls,.csv" style="font-size:.85rem;">
+                    <button id="magazaImportBtn" class="btn-success" style="width:auto;padding:.6rem 1.2rem;font-size:.85rem;" disabled>
+                        📥 İçe Aktar
+                    </button>
+                    <span id="magazaStatus" style="font-size:.85rem;color:#6b7280;"></span>
+                </div>
+                <div id="magazaPreview" style="margin-top:.75rem;font-size:.8rem;color:#374151;"></div>
+            </div>
+
             <div class="tabs">
                 <button class="tab active" data-tab="isleticiSatis">🏪 İşletici</button>
                 <button class="tab" data-tab="stok">📦 Stok</button>
@@ -1338,6 +1354,113 @@
             excelRows = [];
             btn.disabled = true;
             showAlert('success', '✅ Excel içe aktarma tamamlandı: ' + totalSaved + ' kayıt veritabanına eklendi.');
+        });
+        // ─────────────────────────────────────────────────────
+
+        // ── MAĞAZA LİSTESİ IMPORT ────────────────────────────
+        var magazaRows = [];
+
+        // HTML numeric entity çöz (&#214; → Ö) + trim
+        function decodeEnt(v) {
+            var s = String(v == null ? '' : v);
+            s = s.replace(/&#(\d+);/g, function(_, n) { return String.fromCharCode(parseInt(n, 10)); });
+            s = s.replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ');
+            return s.trim();
+        }
+
+        document.getElementById('magazaFileInput').addEventListener('change', function(e) {
+            var file = e.target.files[0];
+            if (!file) return;
+            var status = document.getElementById('magazaStatus');
+            var btn = document.getElementById('magazaImportBtn');
+            status.textContent = '⏳ Dosya okunuyor...';
+            btn.disabled = true;
+            magazaRows = [];
+
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                try {
+                    var wb = XLSX.read(ev.target.result, { type: 'binary', cellDates: false });
+                    var ws = wb.Sheets[wb.SheetNames[0]];
+                    var raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+                    magazaRows = raw.map(function(r) {
+                        // Koordinatı harita linkinden çıkar: .../place/<lat>,<lng>
+                        var link = decodeEnt(r['HARITA_LINK']);
+                        var enlem = '', boylam = '';
+                        var mm = link.match(/place\/(-?\d+\.\d+),(-?\d+\.\d+)/);
+                        if (mm) { enlem = mm[1]; boylam = mm[2]; }
+                        return {
+                            teslim_noktasi_id: String(r['TESLIM_NOKTASI_ID'] || '').trim(),
+                            tip:        decodeEnt(r['ACIKLAMA']).toUpperCase(),   // F kolonu: M/MM/MMM/5M/MACRO
+                            tip_kodu:   String(r['TIP'] || '').trim(),
+                            tur:        decodeEnt(r['ACIKLAMA1']),
+                            magaza_adi: decodeEnt(r['TESLIM_NOKTASI_ACIKLAMA']),
+                            il:         decodeEnt(r['IL_ACIKLAMA']),
+                            bolge:      decodeEnt(r['BOLGE_ACIKLAMA']),
+                            adres:      decodeEnt(r['TESLIM_NOKTASI_ADRESI']),
+                            tel:        String(r['TEL_NO'] || '').trim(),
+                            posta_kodu: String(r['POSTA_KODU'] || '').trim(),
+                            enlem: enlem, boylam: boylam,
+                            harita_link: link,
+                        };
+                    }).filter(function(r) { return r.teslim_noktasi_id; });
+
+                    // Tip dağılımı önizleme
+                    var dagilim = {};
+                    magazaRows.forEach(function(r) { dagilim[r.tip] = (dagilim[r.tip] || 0) + 1; });
+                    var ozet = Object.keys(dagilim).sort(function(a,b){return dagilim[b]-dagilim[a];})
+                        .map(function(k){ return k + ': ' + dagilim[k]; }).join(' · ');
+
+                    status.textContent = '✅ ' + magazaRows.length + ' mağaza hazır';
+                    document.getElementById('magazaPreview').innerHTML =
+                        '<strong>Tip dağılımı:</strong> ' + ozet + '<br><strong>İlk 3:</strong><br>' +
+                        magazaRows.slice(0, 3).map(function(r) {
+                            return '🏬 ' + r.teslim_noktasi_id + ' · ' + r.tip + ' · ' + r.magaza_adi + ' · ' + r.il;
+                        }).join('<br>');
+                    btn.disabled = false;
+                } catch(err) {
+                    status.textContent = '❌ Hata: ' + err.message;
+                }
+            };
+            reader.readAsBinaryString(file);
+        });
+
+        document.getElementById('magazaImportBtn').addEventListener('click', async function() {
+            if (!magazaRows.length) return;
+            var btn = document.getElementById('magazaImportBtn');
+            var status = document.getElementById('magazaStatus');
+            btn.disabled = true;
+
+            var chunkSize = 500;
+            var totalSaved = 0;
+            var chunks = Math.ceil(magazaRows.length / chunkSize);
+            for (var i = 0; i < chunks; i++) {
+                var chunk = magazaRows.slice(i * chunkSize, (i + 1) * chunkSize);
+                status.textContent = '⏳ Kaydediliyor... (' + (i+1) + '/' + chunks + ')';
+                try {
+                    var fetchRes = await fetch('/api/import-magaza-liste', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ data: chunk })
+                    });
+                    var text = await fetchRes.text();
+                    var result;
+                    try { result = JSON.parse(text); }
+                    catch(pe) { throw new Error('Sunucu hatası (chunk ' + (i+1) + '): ' + text.slice(0, 200)); }
+                    if (!fetchRes.ok) throw new Error(result.message || result.error || 'Sunucu hatası ' + fetchRes.status);
+                    totalSaved += result.saved || 0;
+                } catch(e) {
+                    status.textContent = '❌ Hata chunk ' + (i+1) + ': ' + e.message;
+                    btn.disabled = false;
+                    return;
+                }
+            }
+            status.textContent = '✅ Tamamlandı! ' + totalSaved + ' mağaza kaydedildi/güncellendi.';
+            document.getElementById('magazaPreview').innerHTML = '';
+            magazaRows = [];
+            btn.disabled = true;
+            showAlert('success', '✅ Mağaza listesi içe aktarıldı: ' + totalSaved + ' kayıt.');
         });
         // ─────────────────────────────────────────────────────
 
