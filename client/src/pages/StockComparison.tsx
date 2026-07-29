@@ -98,20 +98,23 @@ function locType(row: RawStock): LocType {
   return 'magaza';
 }
 
-// Mağaza tipini teslim noktası adından çıkar (MMM, MM'den; Macrocenter, M'den önce)
+// Mağaza tipini isimden çıkar (yalnızca magazalar tablosunda eşleşme yoksa kullanılır).
+// DİKKAT: \b KULLANMA — 'MİGROS' içindeki İ, JS'te kelime karakteri sayılmadığından
+// /\bM\b/ baştaki M'yi eşleştirir ve mağazayı yanlışlıkla M tipi yapar.
+// Bunun yerine isim kelimelere bölünüp tam eşleşme aranıyor.
 function getStoreType(name: string): string {
-  const n = (name || '').toUpperCase();
-  if (/\bMACRO ?CENTER\b/.test(n) || /\bMACRO\b/.test(n)) return 'Macrocenter';
-  if (/\b5M\b/.test(n))  return '5M';
-  if (/\bMMM\b/.test(n)) return 'MMM';
-  if (/\bMM\b/.test(n))  return 'MM';
-  if (/\bM\b/.test(n))   return 'M';
+  const tokens = (name || '').toUpperCase().split(/[\s.,/()\-]+/).filter(Boolean);
+  if (tokens.some(t => t.startsWith('MACRO'))) return 'Macrocenter';
+  if (tokens.includes('5M'))  return '5M';
+  if (tokens.includes('MMM')) return 'MMM';
+  if (tokens.includes('MM'))  return 'MM';
+  if (tokens.includes('M'))   return 'M';
   return 'Diğer';
 }
-const TYPE_ORDER = ['MMM', 'MM', '5M', 'Macrocenter', 'M', 'Diğer'];
+const TYPE_ORDER = ['MMM', 'MM', '5M', 'Macrocenter', 'M', 'Hemen', 'Diğer'];
 const TYPE_COLORS: Record<string, string> = {
   'MMM': '#C0392B', 'MM': '#1A3A5C', '5M': '#F5A623',
-  'Macrocenter': '#6D28D9', 'M': '#0891B2', 'Diğer': '#6b7280',
+  'Macrocenter': '#6D28D9', 'M': '#0891B2', 'Hemen': '#0EA5E9', 'Diğer': '#6b7280',
 };
 
 function formatDateTR(d: string) {

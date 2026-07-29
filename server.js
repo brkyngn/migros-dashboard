@@ -302,24 +302,33 @@ app.get('/api/db-ozet', async (req, res) => {
 // Mağaza tipini (MM/MMM/5M/Macrocenter) isim kolonundan çıkaran SQL CASE.
 // Sıra önemli: MACROCENTER, M'den; MMM, MM'den önce (Postgres \y = kelime sınırı).
 function tipCase(col) {
+  // Kelime sınırı için \y KULLANMA: 'MİGROS' içindeki İ birçok locale'de harf
+  // sayılmadığından \yM\y baştaki M'yi eşleştirip mağazayı yanlışlıkla M tipi yapar.
+  // Bunun yerine açık boşluk/başlangıç-bitiş sınırı kullanılıyor.
+  const w = (kelime) => `${col} ~* '(^| )${kelime}( |$)'`;
   return `CASE
-    WHEN ${col} ~* 'MACRO ?CENTER' OR ${col} ~* '\\yMACRO\\y' THEN 'Macrocenter'
-    WHEN ${col} ~* '\\y5M\\y'  THEN '5M'
-    WHEN ${col} ~* '\\yMMM\\y' THEN 'MMM'
-    WHEN ${col} ~* '\\yMM\\y'  THEN 'MM'
-    WHEN ${col} ~* '\\yM\\y'   THEN 'M'
+    WHEN ${col} ~* 'MACRO'  THEN 'Macrocenter'
+    WHEN ${w('5M')}  THEN '5M'
+    WHEN ${w('MMM')} THEN 'MMM'
+    WHEN ${w('MM')}  THEN 'MM'
+    WHEN ${w('M')}   THEN 'M'
     ELSE 'Diğer' END`;
 }
 
 // magazalar.tip (Excel F ham kod) → gösterim tipine normalize et
+// DİKKAT: Excel F kolonundaki kod ile müşteriye görünen marka aynı değil.
+//   kod 'HİPER' -> mağaza adları '5M ...' yani gerçek 5M hipermarketler
+//   kod '5M'    -> 'HEMEN ...' / darkstore / operasyon noktaları (hipermarket değil)
 function normMagazaTip(expr) {
   return `CASE UPPER(${expr})
     WHEN 'MACRO' THEN 'Macrocenter'
     WHEN 'MACROCENTER' THEN 'Macrocenter'
-    WHEN 'MMM' THEN 'MMM'
-    WHEN 'MM'  THEN 'MM'
-    WHEN '5M'  THEN '5M'
-    WHEN 'M'   THEN 'M'
+    WHEN 'MMM'   THEN 'MMM'
+    WHEN 'MM'    THEN 'MM'
+    WHEN 'HİPER' THEN '5M'
+    WHEN 'HIPER' THEN '5M'
+    WHEN '5M'    THEN 'Hemen'
+    WHEN 'M'     THEN 'M'
     ELSE 'Diğer' END`;
 }
 
@@ -392,7 +401,7 @@ app.get('/api/magaza-tipi', async (req, res) => {
 // Hedef evren: magazalar tablosundaki MM / MMM / 5M / MACRO mağazaları.
 // Her mağaza için: seçili dönem satışı, tüm zaman satışı, güncel stok.
 // Durum: bulunuyor (dönemde satış veya stok>0) / daha_once (eskiden satış) / hic
-const BULUNURLUK_TIPLER = ['MM', 'MMM', '5M', 'MACRO', 'MACROCENTER'];
+const BULUNURLUK_TIPLER = ['MM', 'MMM', 'MACRO', 'MACROCENTER', 'HİPER', 'HIPER'];
 const PERIYOT_GUN = { gun: 0, '7gun': 6, ay: 29 };
 
 app.get('/api/bulunurluk', async (req, res) => {
