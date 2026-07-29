@@ -9,6 +9,10 @@ export interface DailySale {
   QuantitySold: string;
   NetSalesValue: string;
   BarcodeNumber?: string;
+  // magazalar tablosundan zenginleştirme (LEFT JOIN — eşleşmezse null)
+  il?: string | null;
+  bolge?: string | null;
+  magaza_tipi?: string | null;
 }
 
 export interface StockRecord {

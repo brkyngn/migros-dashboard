@@ -267,7 +267,14 @@ app.get('/api/db-gunluk', async (req, res) => {
     let where = '';
     if (startDate) { params.push(startDate); where += ` AND "DateTransaction"::date >= $${params.length}::date`; }
     if (endDate)   { params.push(endDate);   where += ` AND "DateTransaction"::date <= $${params.length}::date`; }
-    const r = await pool.query(`SELECT * FROM gunluk_satis WHERE 1=1${where} ORDER BY "DateTransaction" DESC LIMIT 20000`, params);
+    // magazalar ile zenginleştir: gerçek il/bölge ve kesin mağaza tipi
+    const r = await pool.query(`
+      SELECT g.*, m.il AS il, m.bolge AS bolge,
+             CASE WHEN m.tip IS NOT NULL THEN ${normMagazaTip('m.tip')} ELSE NULL END AS magaza_tipi
+      FROM gunluk_satis g
+      LEFT JOIN magazalar m ON m.teslim_noktasi_id = g."StoreNumber"
+      WHERE 1=1${where.replace(/"DateTransaction"/g, 'g."DateTransaction"')}
+      ORDER BY g."DateTransaction" DESC LIMIT 20000`, params);
     res.json(r.rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -906,6 +913,7 @@ async function startServer() {
   try {
     await initializeDatabase();
     await initializeFinanceTables(pool);
+    await ensureMagazalarTable();   // /api/db-gunluk join'i için tablo hazır olmalı
     // Login'i arka planda yap — başlamayı bloklama
     loginMigros().then(ok => {
       if (ok) console.log('✅ Migros login başarılı');

@@ -103,10 +103,10 @@ export default function DailyReport() {
       .sort((a, b) => b.qty - a.qty)
       .slice(0, 15);
 
-    // Şehir bazlı (StoreName'den ilk kelime)
+    // Şehir bazlı — magazalar tablosundaki gerçek il (yoksa 'Bilinmiyor')
     const cityMap: Record<string, { qty: number; rev: number }> = {};
     sales.forEach(s => {
-      const city = (s.StoreName || '').split(' ')[0] || 'Diğer';
+      const city = (s.il || '').trim() || 'Bilinmiyor';
       if (!cityMap[city]) cityMap[city] = { qty: 0, rev: 0 };
       cityMap[city].qty += parseFloat(s.QuantitySold) || 0;
       cityMap[city].rev += parseFloat(s.NetSalesValue) || 0;
@@ -119,7 +119,7 @@ export default function DailyReport() {
     // Mağaza tipine göre gruplama (MM / MMM / 5M / Macrocenter)
     const typeMap: Record<string, { qty: number; rev: number; stores: Set<string> }> = {};
     sales.forEach(s => {
-      const t = getStoreType(s.StoreName);
+      const t = (s.magaza_tipi || '').trim() || getStoreType(s.StoreName);
       if (!typeMap[t]) typeMap[t] = { qty: 0, rev: 0, stores: new Set() };
       typeMap[t].qty += parseFloat(s.QuantitySold) || 0;
       typeMap[t].rev += parseFloat(s.NetSalesValue) || 0;
@@ -303,9 +303,10 @@ export default function DailyReport() {
                   <BarChart data={stats.topCities} layout="vertical" margin={{ left: 0, right: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
                     <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} />
-                    <YAxis type="category" dataKey="city" tick={{ fontSize: 11, fill: '#6b7280' }} width={80} />
+                    <YAxis type="category" dataKey="city" tick={{ fontSize: 11, fill: '#6b7280' }} width={120} />
                     <Tooltip
-                      formatter={(v: unknown) => [formatNum(Number(v)), 'Adet']}
+                      formatter={(v: unknown, _n, p: { payload?: { rev?: number } }) =>
+                        [`${formatNum(Number(v))} adet · ${formatTL(p?.payload?.rev || 0)}`, 'Satış']}
                       contentStyle={{ fontSize: 12, borderRadius: 8 }}
                     />
                     <Bar dataKey="qty" radius={[0, 4, 4, 0]} maxBarSize={22}>
