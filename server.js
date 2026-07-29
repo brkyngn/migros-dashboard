@@ -320,8 +320,18 @@ function tipCase(col) {
   // sayılmadığından \yM\y baştaki M'yi eşleştirip mağazayı yanlışlıkla M tipi yapar.
   // Bunun yerine açık boşluk/başlangıç-bitiş sınırı kullanılıyor.
   const w = (kelime) => `${col} ~* '(^| )${kelime}( |$)'`;
+  // Sıra önemli: MACROKIOSK, MACRO'dan ÖNCE gelmeli — yoksa 114 kiosk
+  // 'MACRO' alt dizesine takılıp hedef formatımız Macrocenter'ı şişiriyor.
   return `CASE
-    WHEN ${col} ~* 'MACRO'  THEN 'Macrocenter'
+    WHEN ${col} ~* 'MACROKIOSK'   THEN 'Macrokiosk'
+    WHEN ${col} ~* 'MACRO'        THEN 'Macrocenter'
+    WHEN ${col} ~* 'MJET'         THEN 'MJet'
+    WHEN ${col} ~* 'MION'         THEN 'MION'
+    WHEN ${col} ~* 'M[İI]N[İI]GROS' THEN 'Minigros'
+    WHEN ${col} ~* 'GROSS'        THEN 'Gross'
+    WHEN ${col} ~* 'HEMEN'        THEN 'Hemen'
+    WHEN ${col} ~* 'TOPTAN'       THEN 'Toptan'
+    WHEN ${col} ~* 'DA[ĞG]ITIM MERKEZ' THEN 'Depo'
     WHEN ${w('5M')}  THEN '5M'
     WHEN ${w('MMM')} THEN 'MMM'
     WHEN ${w('MM')}  THEN 'MM'

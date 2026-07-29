@@ -26,9 +26,20 @@ export const TYPE_COLORS: Record<string, string> = {
 // DİKKAT: \b KULLANMA — 'MİGROS' içindeki İ, JS'te kelime karakteri sayılmadığından
 // /\bM\b/ baştaki M'yi eşleştirir ve mağazayı yanlışlıkla M tipi yapar.
 // Bunun yerine isim kelimelere bölünüp tam eşleşme aranıyor.
+// Sıra önemli: MACROKIOSK, MACRO'dan ÖNCE bakılmalı — yoksa kiosk'lar hedef
+// formatımız Macrocenter olarak sayılır. Sunucudaki tipCase() ile aynı sıra.
 export function getStoreType(name: string): string {
-  const tokens = (name || '').toUpperCase().split(/[\s.,/()\-]+/).filter(Boolean);
+  const u = (name || '').toUpperCase();
+  const tokens = u.split(/[\s.,/()\-]+/).filter(Boolean);
+  if (u.includes('MACROKIOSK')) return 'Macrokiosk';
   if (tokens.some(t => t.startsWith('MACRO'))) return 'Macrocenter';
+  if (u.includes('MJET'))    return 'MJet';
+  if (u.includes('MION'))    return 'MION';
+  if (/M[İI]N[İI]GROS/.test(u)) return 'Minigros';
+  if (u.includes('GROSS'))   return 'Gross';
+  if (u.includes('HEMEN'))   return 'Hemen';
+  if (u.includes('TOPTAN'))  return 'Toptan';
+  if (/DA[ĞG]ITIM MERKEZ/.test(u)) return 'Depo';
   if (tokens.includes('5M'))  return '5M';
   if (tokens.includes('MMM')) return 'MMM';
   if (tokens.includes('MM'))  return 'MM';
