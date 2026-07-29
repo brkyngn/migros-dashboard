@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import type { DailySale } from '../types';
 import { SKU_AC, SKU_MB, PRODUCTS } from '../utils/calculations';
 import { formatTL, formatNum } from '../utils/formatters';
+import { TYPE_ORDER, TYPE_COLORS, getStoreType } from '../utils/storeTypes';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
 const AC_COLOR = '#C0392B';
@@ -19,24 +20,9 @@ function getProductName(sku: string) {
 }
 
 // Mağaza tipini isimden çıkar (yalnızca magazalar tablosunda eşleşme yoksa kullanılır).
-// DİKKAT: \b KULLANMA — 'MİGROS' içindeki İ, JS'te kelime karakteri sayılmadığından
-// /\bM\b/ baştaki M'yi eşleştirir ve mağazayı yanlışlıkla M tipi yapar.
-// Bunun yerine isim kelimelere bölünüp tam eşleşme aranıyor.
-function getStoreType(name: string): string {
-  const tokens = (name || '').toUpperCase().split(/[\s.,/()\-]+/).filter(Boolean);
-  if (tokens.some(t => t.startsWith('MACRO'))) return 'Macrocenter';
-  if (tokens.includes('5M'))  return '5M';
-  if (tokens.includes('MMM')) return 'MMM';
-  if (tokens.includes('MM'))  return 'MM';
-  if (tokens.includes('M'))   return 'M';
-  return 'Diğer';
-}
 
-const TYPE_ORDER = ['MMM', 'MM', '5M', 'Macrocenter', 'M', 'Hemen', 'Diğer'];
-const TYPE_COLORS: Record<string, string> = {
-  'MMM': '#C0392B', 'MM': '#1A3A5C', '5M': '#F5A623',
-  'Macrocenter': '#6D28D9', 'M': '#0891B2', 'Hemen': '#0EA5E9', 'Diğer': '#6b7280',
-};
+
+
 
 export default function DailyReport() {
   const [allDates, setAllDates] = useState<string[]>([]);

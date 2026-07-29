@@ -3,16 +3,13 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, PieChart, Pie, Legend,
 } from 'recharts';
+import { TYPE_ORDER, TYPE_COLORS } from '../utils/storeTypes';
 import { formatNum, formatTL } from '../utils/formatters';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
 // ─── Sabitler ────────────────────────────────────────────────────────────────
 
-const TYPE_ORDER = ['MMM', 'MM', '5M', 'Macrocenter', 'M', 'Hemen', 'Diğer'];
-const TYPE_COLORS: Record<string, string> = {
-  'MMM': '#C0392B', 'MM': '#1A3A5C', '5M': '#F5A623',
-  'Macrocenter': '#6D28D9', 'M': '#0891B2', 'Hemen': '#0EA5E9', 'Diğer': '#6b7280',
-};
+
 
 // ─── Tipler ──────────────────────────────────────────────────────────────────
 

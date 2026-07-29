@@ -61,6 +61,8 @@ const DURUM_INFO: Record<Durum, { label: string; color: string; bg: string }> = 
 const TYPE_COLORS: Record<string, string> = {
   'MMM': '#C0392B', 'MM': '#1A3A5C', '5M': '#F5A623', 'Macrocenter': '#6D28D9',
 };
+// Bilerek utils/storeTypes'tan daha dar: /api/bulunurluk zaten yalnızca hedef
+// formatları (MM/MMM/MACRO/HİPER) döndürüyor, diğer tipler bu rapora hiç girmiyor.
 const TYPE_ORDER = ['MMM', 'MM', '5M', 'Macrocenter'];
 
 const GRUPLAMALAR: { id: Gruplama; label: string; baslik: string; sutun: string }[] = [
