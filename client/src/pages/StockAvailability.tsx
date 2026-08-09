@@ -19,10 +19,15 @@ interface Store {
   stoklu_gun: number | string;
   kayit_gun: number | string;
   stoksuz_gun: number | string | null;
+  toplam_qty: number | string;
+  satis_gun: number | string;
+  ilk_satis: string | null;
+  son_satis: string | null;
+  ort_gunluk_satis: number | string | null;
 }
 
 interface ApiResp {
-  gecmis: { ilk: string | null; son: string | null; gun: number };
+  gecmis: { ilk: string | null; son: string | null; gun: number; satisSon: string | null };
   magazalar: Store[];
   error?: string;
 }
@@ -31,9 +36,11 @@ interface SRow extends Store {
   stok: number;
   gun: number | null;   // kaç gündür stoksuz (null = geçmişte hiç stok görülmedi)
   kova: string;         // süre kovası anahtarı
+  ortGunluk: number;    // geçmişten gelen ortalama günlük satış (adet)
+  kayip: number;        // tahmini kayıp = ortGunluk × stoksuz gün
 }
 
-interface Agg { toplam: number; stokta: number; stoksuz: number; stok: number; gunTop: number; gunAdet: number }
+interface Agg { toplam: number; stokta: number; stoksuz: number; stok: number; gunTop: number; gunAdet: number; ortGunluk: number; kayip: number }
 
 type Gruplama = 'bolge-tip' | 'tip-bolge' | 'sure-tip';
 
@@ -68,12 +75,14 @@ function kovaBul(gun: number | null, stok: number): string {
 }
 
 function emptyAgg(): Agg {
-  return { toplam: 0, stokta: 0, stoksuz: 0, stok: 0, gunTop: 0, gunAdet: 0 };
+  return { toplam: 0, stokta: 0, stoksuz: 0, stok: 0, gunTop: 0, gunAdet: 0, ortGunluk: 0, kayip: 0 };
 }
 function addToAgg(a: Agg, s: SRow) {
   a.toplam++;
   if (s.kova === 'stokta') a.stokta++; else a.stoksuz++;
   a.stok += s.stok;
+  a.ortGunluk += s.ortGunluk;
+  a.kayip += s.kayip;
   if (s.gun !== null && s.gun > 0) { a.gunTop += s.gun; a.gunAdet++; }
 }
 const ortGun = (a: Agg) => a.gunAdet > 0 ? a.gunTop / a.gunAdet : 0;
@@ -111,7 +120,11 @@ export default function StockAvailability() {
     return data.magazalar.map(s => {
       const stok = num(s.guncel_stok);
       const gun = s.stoksuz_gun === null || s.stoksuz_gun === undefined ? null : num(s.stoksuz_gun);
-      return { ...s, stok, gun, kova: kovaBul(gun, stok) };
+      const ortGunluk = num(s.ort_gunluk_satis);
+      const kova = kovaBul(gun, stok);
+      // Kayıp yalnızca fiilen stoksuz geçen günler için anlamlı
+      const kayip = kova === 'stokta' || gun === null ? 0 : ortGunluk * gun;
+      return { ...s, stok, gun, kova, ortGunluk, kayip };
     });
   }, [data]);
 
@@ -121,7 +134,8 @@ export default function StockAvailability() {
     const q = arama.trim().toLocaleLowerCase('tr');
     return stores.filter(s => {
       if (sadeceHedef && !HEDEF.has(s.tip)) return false;
-      if (kovaFiltre !== 'hepsi' && s.kova !== kovaFiltre) return false;
+      if (kovaFiltre === 'stoksuz') { if (s.kova === 'stokta') return false; }
+      else if (kovaFiltre !== 'hepsi' && s.kova !== kovaFiltre) return false;
       if (q && !(s.magaza_adi || '').toLocaleLowerCase('tr').includes(q)
             && !(s.il || '').toLocaleLowerCase('tr').includes(q)) return false;
       return true;
@@ -143,6 +157,11 @@ export default function StockAvailability() {
     });
     return c;
   }, [stores, sadeceHedef, HEDEF]);
+
+  const tumSayi = useMemo(
+    () => Object.values(kovaSayilari).reduce((a, b) => a + b, 0), [kovaSayilari]);
+  const stoksuzSayi = useMemo(
+    () => Object.entries(kovaSayilari).reduce((a, [k, v]) => k === 'stokta' ? a : a + v, 0), [kovaSayilari]);
 
   const tipUstte = gruplama === 'tip-bolge';
   const sureUstte = gruplama === 'sure-tip';
@@ -180,7 +199,9 @@ export default function StockAvailability() {
             ad: ad2, agg: td.agg,
             // En uzun süredir stoksuz olan en üstte — aksiyon listesi bu sırayla okunur
             magazalar: td.magazalar.sort((a, b) =>
-              (b.gun ?? 99999) - (a.gun ?? 99999) || a.magaza_adi.localeCompare(b.magaza_adi, 'tr')),
+              b.kayip - a.kayip
+              || (b.gun ?? 99999) - (a.gun ?? 99999)
+              || a.magaza_adi.localeCompare(b.magaza_adi, 'tr')),
           })),
           tur2 as 'kova' | 'tip' | 'bolge'),
       })),
@@ -261,8 +282,15 @@ export default function StockAvailability() {
         <button onClick={() => setKovaFiltre('hepsi')}
           className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all
             ${kovaFiltre === 'hepsi' ? 'bg-gray-700 text-white border-gray-700' : 'bg-white text-gray-600 border-gray-200'}`}>
-          Tümü
+          Tümü <span className="font-mono">{tumSayi}</span>
         </button>
+        <button onClick={() => setKovaFiltre(kovaFiltre === 'stoksuz' ? 'hepsi' : 'stoksuz')}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all
+            ${kovaFiltre === 'stoksuz' ? 'bg-ac text-white border-ac' : 'bg-white text-ac border-ac/40 hover:border-ac'}`}
+          title="Stokta olmayan bütün mağazalar — süre farketmeksizin">
+          🚨 Tüm Stoksuzlar <span className="font-mono">{stoksuzSayi}</span>
+        </button>
+        <span className="w-px bg-gray-200 mx-1" />
         {KOVALAR.map(k => {
           const adet = kovaSayilari[k.id] || 0;
           const aktif = kovaFiltre === k.id;
@@ -278,7 +306,7 @@ export default function StockAvailability() {
       </div>
 
       {/* KPI kartları */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 no-print">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 no-print">
         <div className="bg-white rounded-xl border border-gray-200 p-4" style={{ borderTop: '3px solid #1A3A5C' }}>
           <div className="text-xs text-gray-500 font-medium mb-1">Takip Edilen Mağaza</div>
           <div className="text-2xl font-black text-gray-800 leading-none">{formatNum(total.toplam)}</div>
@@ -301,6 +329,13 @@ export default function StockAvailability() {
           <div className="text-2xl font-black text-gray-800 leading-none">{formatNum(Math.round(total.stok))}</div>
           <div className="text-[11px] text-gray-400 mt-1">adet</div>
         </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4" style={{ borderTop: '3px solid #7f1d1d' }}>
+          <div className="text-xs text-gray-500 font-medium mb-1">Tahmini Kayıp Satış</div>
+          <div className="text-2xl font-black leading-none" style={{ color: '#7f1d1d' }}>
+            {formatNum(Math.round(total.kayip))}
+          </div>
+          <div className="text-[11px] text-gray-400 mt-1">adet · ort. günlük × stoksuz gün</div>
+        </div>
       </div>
 
       {/* Yazdırma bloğu — ekranda gizli, PDF'te tüm dallar açık.
@@ -315,7 +350,8 @@ export default function StockAvailability() {
             <br />
             {sadeceHedef ? 'MM · MMM · 5M · Macrocenter' : 'Tüm formatlar'}
             {kovaFiltre !== 'hepsi' && ` · Filtre: ${KOVA_INFO[kovaFiltre]?.label}`}
-            {' · '}<b>{total.toplam} mağaza · {total.stoksuz} stoksuz · ort. {ortGun(total).toFixed(0)} gün</b>
+            {' · '}<b>{total.toplam} mağaza · {total.stoksuz} stoksuz · ort. {ortGun(total).toFixed(0)} gün
+            {total.kayip > 0 && ` · tahmini kayıp ${formatNum(Math.round(total.kayip))} adet`}</b>
           </div>
         </div>
         <table className="print-table">
@@ -325,6 +361,8 @@ export default function StockAvailability() {
               <th>İl</th>
               <th>Güncel Stok</th>
               <th>Stoksuz Gün</th>
+              <th>Ort. Günlük</th>
+              <th>Tah. Kayıp</th>
               <th>Son Stok Tarihi</th>
             </tr>
           </thead>
@@ -333,16 +371,20 @@ export default function StockAvailability() {
               <Fragment key={'p' + b.ad}>
                 <tr className="print-l1">
                   <td>{b.ad === 'Bilinmiyor' ? b.ad : (KOVA_INFO[b.ad]?.label ?? b.ad)}</td>
-                  <td colSpan={4}>
+                  <td colSpan={6}>
                     {b.agg.toplam} mağaza · {b.agg.stoksuz} stoksuz
                     {b.agg.gunAdet > 0 && ` · ort. ${ortGun(b.agg).toFixed(0)} gün`}
+                    {b.agg.kayip > 0 && ` · tahmini kayıp ${formatNum(Math.round(b.agg.kayip))} adet`}
                   </td>
                 </tr>
                 {b.alt.map(t => (
                   <Fragment key={'p' + b.ad + t.ad}>
                     <tr className="print-l2">
                       <td>{t.ad}</td>
-                      <td colSpan={4}>{t.agg.toplam} mağaza · {t.agg.stoksuz} stoksuz</td>
+                      <td colSpan={6}>
+                        {t.agg.toplam} mağaza · {t.agg.stoksuz} stoksuz
+                        {t.agg.kayip > 0 && ` · tahmini kayıp ${formatNum(Math.round(t.agg.kayip))} adet`}
+                      </td>
                     </tr>
                     {t.magazalar.map(s => (
                       <tr key={'p' + b.ad + t.ad + s.id}>
@@ -352,6 +394,8 @@ export default function StockAvailability() {
                         <td style={{ textAlign: 'right' }}>
                           {s.gun === null ? `≥${s.kayit_gun}` : s.gun > 0 ? s.gun : '—'}
                         </td>
+                        <td style={{ textAlign: 'right' }}>{s.ortGunluk > 0 ? s.ortGunluk.toFixed(2) : '—'}</td>
+                        <td style={{ textAlign: 'right' }}>{s.kayip > 0 ? formatNum(Math.round(s.kayip)) : '—'}</td>
                         <td style={{ textAlign: 'right' }}>{s.son_stok_tarihi ? formatDateTR(s.son_stok_tarihi) : 'hiç'}</td>
                       </tr>
                     ))}
@@ -377,7 +421,7 @@ export default function StockAvailability() {
           </div>
           <div className="text-xs text-gray-400 no-print">Satıra tıklayarak kır</div>
         </div>
-        <table className="w-full text-xs min-w-[720px]">
+        <table className="w-full text-xs min-w-[940px]">
           <thead>
             <tr className="bg-gray-50 text-gray-500 uppercase tracking-wide">
               <th className="px-4 py-2.5 text-left font-semibold">{gruplamaInfo.sutun}</th>
@@ -386,6 +430,8 @@ export default function StockAvailability() {
               <th className="px-3 py-2.5 text-right font-semibold">Stoksuz</th>
               <th className="px-3 py-2.5 text-right font-semibold">Güncel Stok</th>
               <th className="px-3 py-2.5 text-right font-semibold">Stoksuz Gün</th>
+              <th className="px-3 py-2.5 text-right font-semibold">Ort. Günlük Satış</th>
+              <th className="px-3 py-2.5 text-right font-semibold">Tahmini Kayıp</th>
               <th className="px-3 py-2.5 text-right font-semibold">Son Stok Tarihi</th>
             </tr>
           </thead>
@@ -407,6 +453,10 @@ export default function StockAvailability() {
                     <td className="px-3 py-2.5 text-right font-mono text-gray-500">
                       {b.agg.gunAdet > 0 ? `ort. ${ortGun(b.agg).toFixed(0)}` : '—'}
                     </td>
+                    <td className="px-3 py-2.5 text-right font-mono text-gray-700">{b.agg.ortGunluk.toFixed(1)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-red-600">
+                      {b.agg.kayip > 0 ? formatNum(Math.round(b.agg.kayip)) : '—'}
+                    </td>
                     <td className="px-3 py-2.5"></td>
                   </tr>
 
@@ -427,6 +477,10 @@ export default function StockAvailability() {
                           <td className="px-3 py-2 text-right font-mono text-gray-800">{formatNum(Math.round(t.agg.stok))}</td>
                           <td className="px-3 py-2 text-right font-mono text-gray-500">
                             {t.agg.gunAdet > 0 ? `ort. ${ortGun(t.agg).toFixed(0)}` : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-gray-700">{t.agg.ortGunluk.toFixed(1)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-red-600">
+                            {t.agg.kayip > 0 ? formatNum(Math.round(t.agg.kayip)) : '—'}
                           </td>
                           <td className="px-3 py-2"></td>
                         </tr>
@@ -454,6 +508,12 @@ export default function StockAvailability() {
                                   style={{ color: s.gun === null ? '#6b7280' : s.gun > 0 ? '#C0392B' : '#16a34a' }}>
                                 {s.gun === null ? `≥${s.kayit_gun}` : s.gun > 0 ? s.gun : '—'}
                               </td>
+                              <td className="px-3 py-2 text-right font-mono text-gray-700">
+                                {s.ortGunluk > 0 ? s.ortGunluk.toFixed(2) : '—'}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-bold text-red-600">
+                                {s.kayip > 0 ? formatNum(Math.round(s.kayip)) : '—'}
+                              </td>
                               <td className="px-3 py-2 text-right text-gray-500">
                                 {s.son_stok_tarihi ? formatDateTR(s.son_stok_tarihi) : 'hiç'}
                               </td>
@@ -476,6 +536,8 @@ export default function StockAvailability() {
               <td className="px-3 py-2.5 text-right font-mono text-gray-500">
                 {total.gunAdet > 0 ? `ort. ${ortGun(total).toFixed(0)}` : '—'}
               </td>
+              <td className="px-3 py-2.5 text-right font-mono text-gray-900">{total.ortGunluk.toFixed(1)}</td>
+              <td className="px-3 py-2.5 text-right font-mono text-red-600">{formatNum(Math.round(total.kayip))}</td>
               <td className="px-3 py-2.5"></td>
             </tr>
           </tbody>

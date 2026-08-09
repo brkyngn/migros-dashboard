@@ -447,6 +447,13 @@ app.get('/api/stok-bulunurluk', async (req, res) => {
     const gecmis = g.rows[0] || {};
     if (!gecmis.son) return res.json({ gecmis: { ilk: null, son: null, gun: 0 }, magazalar: [] });
 
+    // Ortalama günlük satışın paydası için satış verisinin son günü
+    const sRes = await pool.query(`
+      SELECT MAX("DateTransaction") AS son FROM gunluk_satis
+      WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'
+    `);
+    const satisSon = sRes.rows[0]?.son || null;
+
     const rows = await pool.query(`
       WITH ma AS (
         SELECT "TESLIM_NOKTASI_ID" AS id, veri_tarihi,
@@ -472,6 +479,20 @@ app.get('/api/stok-bulunurluk', async (req, res) => {
       guncel AS (
         SELECT id, miktar AS guncel_stok, tutar AS guncel_tutar
         FROM ma WHERE veri_tarihi = $1
+      ),
+      -- Geçmiş satış ortalaması: payda, mağazanın İLK satışından satış
+      -- verisinin son gününe kadarki takvim günü. Böylece sonradan açılan
+      -- mağazalar, hiç listelenmedikleri günlerle cezalandırılmıyor.
+      sat AS (
+        SELECT "StoreNumber" AS id,
+               SUM(CAST("QuantitySold" AS FLOAT)) AS toplam_qty,
+               MIN("DateTransaction")             AS ilk_satis,
+               MAX("DateTransaction")             AS son_satis,
+               COUNT(DISTINCT "DateTransaction")  AS satis_gun
+        FROM gunluk_satis
+        WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'
+          AND "QuantitySold" ~ '^-?[0-9.]+$'
+        GROUP BY 1
       )
       SELECT o.id,
              COALESCE(m.magaza_adi, o.ad)                     AS magaza_adi,
@@ -482,14 +503,21 @@ app.get('/api/stok-bulunurluk', async (req, res) => {
              (gc.id IS NOT NULL)                              AS guncel_kayit_var,
              o.son_stok_tarihi, o.ilk_kayit, o.stoklu_gun, o.kayit_gun,
              CASE WHEN o.son_stok_tarihi IS NULL THEN NULL
-                  ELSE ($1::date - o.son_stok_tarihi::date) END AS stoksuz_gun
+                  ELSE ($1::date - o.son_stok_tarihi::date) END AS stoksuz_gun,
+             COALESCE(sa.toplam_qty, 0) AS toplam_qty,
+             COALESCE(sa.satis_gun, 0)  AS satis_gun,
+             sa.ilk_satis, sa.son_satis,
+             CASE WHEN sa.toplam_qty IS NULL OR sa.ilk_satis IS NULL THEN NULL
+                  ELSE sa.toplam_qty
+                       / GREATEST(($2::date - sa.ilk_satis::date) + 1, 1) END AS ort_gunluk_satis
       FROM ozet o
       LEFT JOIN magazalar m ON m.teslim_noktasi_id = o.id
       LEFT JOIN guncel gc   ON gc.id = o.id
-    `, [gecmis.son]);
+      LEFT JOIN sat sa      ON sa.id = o.id
+    `, [gecmis.son, satisSon || gecmis.son]);
 
     res.json({
-      gecmis: { ilk: gecmis.ilk, son: gecmis.son, gun: Number(gecmis.gun) },
+      gecmis: { ilk: gecmis.ilk, son: gecmis.son, gun: Number(gecmis.gun), satisSon },
       magazalar: rows.rows,
     });
   } catch(e) {
