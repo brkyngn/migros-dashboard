@@ -56,4 +56,4 @@ export interface FetchLog {
   cekme_tarihi: string;
 }
 
-export type Page = 'dashboard' | 'sales' | 'stock-alerts' | 'turnover' | 'reports' | 'daily-report' | 'daily-stock' | 'stock-comparison' | 'store-types' | 'availability' | 'expenses' | 'pnl' | 'finance-settings' | 'banka' | 'cari';
+export type Page = 'dashboard' | 'sales' | 'stock-alerts' | 'turnover' | 'reports' | 'daily-report' | 'daily-stock' | 'stock-comparison' | 'store-types' | 'availability' | 'stock-availability' | 'expenses' | 'pnl' | 'finance-settings' | 'banka' | 'cari';

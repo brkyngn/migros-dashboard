@@ -428,6 +428,76 @@ app.get('/api/magaza-tipi', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── STOK BULUNURLUĞU ─────────────────────────────────────────────────────────
+// Tamamen stok geçmişinden hesaplanır (satış verisi kullanılmaz).
+// Her mağaza teslim noktası (DEPO_TUR='MA') için:
+//   guncel_stok    — son snapshot'taki miktar
+//   son_stok_tarihi— stoğun > 0 görüldüğü EN SON gün (hiç görülmediyse NULL)
+//   stoksuz_gun    — son snapshot ile son_stok_tarihi arasındaki gün farkı
+// stoksuz_gun yalnızca elimizdeki snapshot aralığı kadar geriye gidebilir;
+// bu yüzden yanıt 'gecmis' bloğunda kapsama penceresini de döndürür ve
+// hiç stok görülmemiş mağazalar için istemci "≥ N gün" gösterir.
+app.get('/api/stok-bulunurluk', async (req, res) => {
+  try {
+    const g = await pool.query(`
+      SELECT MIN(veri_tarihi) AS ilk, MAX(veri_tarihi) AS son,
+             COUNT(DISTINCT veri_tarihi) AS gun
+      FROM stok WHERE veri_tarihi ~ '^\\d{4}-\\d{2}-\\d{2}'
+    `);
+    const gecmis = g.rows[0] || {};
+    if (!gecmis.son) return res.json({ gecmis: { ilk: null, son: null, gun: 0 }, magazalar: [] });
+
+    const rows = await pool.query(`
+      WITH ma AS (
+        SELECT "TESLIM_NOKTASI_ID" AS id, veri_tarihi,
+               SUM(CAST("STOK_MIKTARI" AS FLOAT)) AS miktar,
+               SUM(CASE WHEN "STOK_TUTARI" ~ '^-?[0-9.]+$'
+                        THEN CAST("STOK_TUTARI" AS FLOAT) ELSE 0 END) AS tutar,
+               MAX("TESLIM_NOKTASI_ACIKLAMA") AS ad
+        FROM stok
+        WHERE "DEPO_TUR" = 'MA'
+          AND veri_tarihi ~ '^\\d{4}-\\d{2}-\\d{2}'
+          AND "STOK_MIKTARI" ~ '^-?[0-9.]+$'
+        GROUP BY 1, 2
+      ),
+      ozet AS (
+        SELECT id,
+               MAX(ad)                                        AS ad,
+               MIN(veri_tarihi)                               AS ilk_kayit,
+               MAX(veri_tarihi) FILTER (WHERE miktar > 0)     AS son_stok_tarihi,
+               COUNT(*) FILTER (WHERE miktar > 0)             AS stoklu_gun,
+               COUNT(*)                                       AS kayit_gun
+        FROM ma GROUP BY id
+      ),
+      guncel AS (
+        SELECT id, miktar AS guncel_stok, tutar AS guncel_tutar
+        FROM ma WHERE veri_tarihi = $1
+      )
+      SELECT o.id,
+             COALESCE(m.magaza_adi, o.ad)                     AS magaza_adi,
+             m.il, m.bolge,
+             ${tipCoalesce('m.tip', 'o.ad')}                  AS tip,
+             COALESCE(gc.guncel_stok, 0)                      AS guncel_stok,
+             COALESCE(gc.guncel_tutar, 0)                     AS guncel_tutar,
+             (gc.id IS NOT NULL)                              AS guncel_kayit_var,
+             o.son_stok_tarihi, o.ilk_kayit, o.stoklu_gun, o.kayit_gun,
+             CASE WHEN o.son_stok_tarihi IS NULL THEN NULL
+                  ELSE ($1::date - o.son_stok_tarihi::date) END AS stoksuz_gun
+      FROM ozet o
+      LEFT JOIN magazalar m ON m.teslim_noktasi_id = o.id
+      LEFT JOIN guncel gc   ON gc.id = o.id
+    `, [gecmis.son]);
+
+    res.json({
+      gecmis: { ilk: gecmis.ilk, son: gecmis.son, gun: Number(gecmis.gun) },
+      magazalar: rows.rows,
+    });
+  } catch(e) {
+    console.error('stok-bulunurluk hata:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── BULUNURLUK RAPORU ────────────────────────────────────────────────────────
 // Hedef evren: magazalar tablosundaki MM / MMM / 5M / MACRO mağazaları.
 // Her mağaza için: seçili dönem satışı, tüm zaman satışı, güncel stok.

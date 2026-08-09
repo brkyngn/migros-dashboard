@@ -11,3 +11,31 @@ body { background-color: #F5F2EC; font-family: 'DM Sans', sans-serif; }
   body { background: white; }
   .sticky { position: static !important; }
 }
+
+/* Yazdırmaya özel liste (Stok Bulunurluk → Migros'a gönderilen PDF).
+   Ekranda gizli; baskıda ekran tablosunun yerine tam açık liste basılır. */
+.print-only { display: none; }
+
+@media print {
+  @page { size: A4 landscape; margin: 12mm 10mm; }
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+
+  .print-header { margin-bottom: 8px; }
+  .print-header h1 { font-size: 15px; font-weight: 700; margin: 0 0 3px; }
+  .print-meta { font-size: 9px; color: #444; line-height: 1.5; }
+
+  .print-table { width: 100%; border-collapse: collapse; font-size: 9px; }
+  .print-table th {
+    text-align: right; padding: 4px 6px; border-bottom: 1.5px solid #333;
+    font-size: 8px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .print-table td { padding: 3px 6px; border-bottom: 1px solid #eee; }
+  /* Grup başlıkları sayfa sonunda yalnız kalmasın */
+  .print-table tr { page-break-inside: avoid; }
+  .print-table thead { display: table-header-group; }
+  .print-l1 td { background: #ececec; font-weight: 700; padding-top: 6px; border-top: 1.5px solid #999; }
+  .print-l2 td { background: #f7f7f7; font-weight: 600; padding-left: 14px; }
+  .print-store { padding-left: 26px !important; }
+  .print-id { color: #888; }
+}
