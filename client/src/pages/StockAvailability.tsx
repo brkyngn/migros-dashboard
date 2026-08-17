@@ -5,8 +5,11 @@ import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
 // ─── Tipler ──────────────────────────────────────────────────────────────────
 
-interface Store {
+interface Row {
   id: string;
+  sku: string;
+  urun_adi: string;
+  sku_kaydi_var: boolean;
   magaza_adi: string;
   il: string | null;
   bolge: string | null;
@@ -28,11 +31,18 @@ interface Store {
 
 interface ApiResp {
   gecmis: { ilk: string | null; son: string | null; gun: number; satisSon: string | null };
-  magazalar: Store[];
+  satirlar: Row[];
   error?: string;
 }
 
-interface SRow extends Store {
+interface SRow {
+  id: string;
+  magaza_adi: string;
+  il: string | null;
+  bolge: string | null;
+  tip: string;
+  son_stok_tarihi: string | null;
+  kayit_gun: number;
   stok: number;
   gun: number | null;   // kaç gündür stoksuz (null = geçmişte hiç stok görülmedi)
   kova: string;         // süre kovası anahtarı
@@ -64,6 +74,17 @@ const GRUPLAMALAR: { id: Gruplama; label: string; baslik: string; sutun: string 
 ];
 
 const num = (v: number | string | null | undefined) => Number(v || 0);
+
+// Uzun Migros ürün adını kısalt
+function kisaUrunAdi(ad: string, sku: string) {
+  const u = (ad || '').toUpperCase();
+  if (u.includes('ACTIVE CARBON')) return 'Active Carbon';
+  if (u.includes('MARSEILLE'))     return 'Marseille Breeze';
+  return (ad || sku).slice(0, 18);
+}
+const URUN_RENK: Record<string, string> = {
+  'Active Carbon': '#C0392B', 'Marseille Breeze': '#1A3A5C',
+};
 
 function kovaBul(gun: number | null, stok: number): string {
   if (gun === null) return 'hicyok';
@@ -104,6 +125,7 @@ export default function StockAvailability() {
   const [gruplama, setGruplama] = useState<Gruplama>('sure-tip');
   const [kovaFiltre, setKovaFiltre] = useState<string>('hepsi');
   const [sadeceHedef, setSadeceHedef] = useState(true);
+  const [urun, setUrun] = useState('hepsi');   // 'hepsi' = her iki üründe de yoksa stoksuz
   const [arama, setArama] = useState('');
 
   useEffect(() => {
@@ -115,18 +137,53 @@ export default function StockAvailability() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Veride görülen ürünler — sabit kodlanmıyor
+  const urunler = useMemo(() => {
+    if (!data) return [];
+    const m = new Map<string, string>();
+    data.satirlar.forEach(r => { if (!m.has(r.sku)) m.set(r.sku, kisaUrunAdi(r.urun_adi, r.sku)); });
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], 'tr'))
+      .map(([sku, ad]) => ({ sku, ad, renk: URUN_RENK[ad] || '#6b7280' }));
+  }, [data]);
+
+  // Satırları mağazaya indirger. 'hepsi' modunda mağaza ancak HER İKİ üründe
+  // de stoksuzsa stoksuz sayılır — bu, SKU'ların son stok tarihlerinin MAX'ı
+  // demek, yani stoksuz gün = SKU'ların stoksuz günlerinin MİN'i.
   const stores = useMemo<SRow[]>(() => {
     if (!data) return [];
-    return data.magazalar.map(s => {
-      const stok = num(s.guncel_stok);
-      const gun = s.stoksuz_gun === null || s.stoksuz_gun === undefined ? null : num(s.stoksuz_gun);
-      const ortGunluk = num(s.ort_gunluk_satis);
+    const map = new Map<string, { meta: Row; hucre: Row[] }>();
+    data.satirlar.forEach(r => {
+      const e = map.get(r.id);
+      if (e) e.hucre.push(r);
+      else map.set(r.id, { meta: r, hucre: [r] });
+    });
+
+    const out: SRow[] = [];
+    map.forEach(({ meta, hucre }) => {
+      const secili = urun === 'hepsi' ? hucre : hucre.filter(r => r.sku === urun);
+      if (!secili.length) return;
+
+      const stok = secili.reduce((a, r) => a + num(r.guncel_stok), 0);
+      const ortGunluk = secili.reduce((a, r) => a + num(r.ort_gunluk_satis), 0);
+      const gunler = secili
+        .filter(r => r.stoksuz_gun !== null && r.stoksuz_gun !== undefined)
+        .map(r => num(r.stoksuz_gun));
+      const gun = gunler.length ? Math.min(...gunler) : null;
+      const sonStok = secili.reduce<string | null>(
+        (a, r) => !r.son_stok_tarihi ? a : (!a || r.son_stok_tarihi > a) ? r.son_stok_tarihi : a, null);
+
       const kova = kovaBul(gun, stok);
       // Kayıp yalnızca fiilen stoksuz geçen günler için anlamlı
       const kayip = kova === 'stokta' || gun === null ? 0 : ortGunluk * gun;
-      return { ...s, stok, gun, kova, ortGunluk, kayip };
+
+      out.push({
+        id: meta.id, magaza_adi: meta.magaza_adi, il: meta.il, bolge: meta.bolge,
+        tip: meta.tip, son_stok_tarihi: sonStok, kayit_gun: num(meta.kayit_gun),
+        stok, gun, kova, ortGunluk, kayip,
+      });
     });
-  }, [data]);
+    return out;
+  }, [data, urun]);
 
   const HEDEF = useMemo(() => new Set(['MM', 'MMM', '5M', 'Macrocenter']), []);
 
@@ -216,6 +273,9 @@ export default function StockAvailability() {
 
   const gruplamaInfo = GRUPLAMALAR.find(g => g.id === gruplama)!;
   const kapsam = data?.gecmis.gun ?? 0;
+  const urunAdi = urun === 'hepsi'
+    ? 'Her iki ürün (ikisi de yoksa stoksuz)'
+    : (urunler.find(u => u.sku === urun)?.ad ?? urun);
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -252,6 +312,25 @@ export default function StockAvailability() {
               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all
                 ${gruplama === g.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
               {g.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+          <button onClick={() => { setUrun('hepsi'); setExpanded(new Set()); }}
+            title="Mağaza ancak her iki üründe de stoksuzsa stoksuz sayılır"
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all
+              ${urun === 'hepsi' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+            Her İkisi
+          </button>
+          {urunler.map(u => (
+            <button key={u.sku} onClick={() => { setUrun(u.sku); setExpanded(new Set()); }}
+              title={`Yalnızca ${u.ad} bazında stok durumu`}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all inline-flex items-center gap-1.5
+                ${urun === u.sku ? 'bg-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              style={urun === u.sku ? { color: u.renk } : undefined}>
+              <span className="w-2 h-2 rounded-full" style={{ background: u.renk }} />
+              {u.ad}
             </button>
           ))}
         </div>
@@ -311,6 +390,10 @@ export default function StockAvailability() {
           <div className="text-xs text-gray-500 font-medium mb-1">Takip Edilen Mağaza</div>
           <div className="text-2xl font-black text-gray-800 leading-none">{formatNum(total.toplam)}</div>
           <div className="text-[11px] text-gray-400 mt-1">{sadeceHedef ? 'MM · MMM · 5M · Macro' : 'tüm formatlar'}</div>
+          <div className="text-[11px] font-semibold mt-0.5"
+               style={{ color: urun === 'hepsi' ? '#6b7280' : (urunler.find(u => u.sku === urun)?.renk ?? '#6b7280') }}>
+            {urun === 'hepsi' ? 'Her iki ürün' : urunAdi}
+          </div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4" style={{ borderTop: '3px solid #16a34a' }}>
           <div className="text-xs text-gray-500 font-medium mb-1">Stokta Var</div>
@@ -348,7 +431,8 @@ export default function StockAvailability() {
             {' — '}Stok tarihi: {formatDateTR(data?.gecmis.son ?? null)}
             {' · '}Kapsam: {kapsam} gün ({formatDateTR(data?.gecmis.ilk ?? null)} – {formatDateTR(data?.gecmis.son ?? null)})
             <br />
-            {sadeceHedef ? 'MM · MMM · 5M · Macrocenter' : 'Tüm formatlar'}
+            Ürün: {urunAdi}
+            {' · '}{sadeceHedef ? 'MM · MMM · 5M · Macrocenter' : 'Tüm formatlar'}
             {kovaFiltre !== 'hepsi' && ` · Filtre: ${KOVA_INFO[kovaFiltre]?.label}`}
             {' · '}<b>{total.toplam} mağaza · {total.stoksuz} stoksuz · ort. {ortGun(total).toFixed(0)} gün
             {total.kayip > 0 && ` · tahmini kayıp ${formatNum(Math.round(total.kayip))} adet`}</b>

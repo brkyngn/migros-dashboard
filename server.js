@@ -507,7 +507,7 @@ app.get('/api/stok-bulunurluk', async (req, res) => {
       FROM stok WHERE veri_tarihi ~ '^\\d{4}-\\d{2}-\\d{2}'
     `);
     const gecmis = g.rows[0] || {};
-    if (!gecmis.son) return res.json({ gecmis: { ilk: null, son: null, gun: 0 }, magazalar: [] });
+    if (!gecmis.son) return res.json({ gecmis: { ilk: null, son: null, gun: 0 }, satirlar: [] });
 
     // Ortalama günlük satışın paydası için satış verisinin son günü
     const sRes = await pool.query(`
@@ -516,30 +516,41 @@ app.get('/api/stok-bulunurluk', async (req, res) => {
     `);
     const satisSon = sRes.rows[0]?.son || null;
 
+    // Satırlar mağaza × SKU bazında döner; "her iki üründe de yok" birleşimini
+    // istemci hesaplar (SUM>0 mantığı = SKU'ların son stok tarihlerinin MAX'ı).
     const rows = await pool.query(`
       WITH ma AS (
-        SELECT "TESLIM_NOKTASI_ID" AS id, veri_tarihi,
+        SELECT "TESLIM_NOKTASI_ID" AS id,
+               "SATICI_URUN_KODU"  AS sku,
+               veri_tarihi,
                SUM(CAST("STOK_MIKTARI" AS FLOAT)) AS miktar,
                SUM(CASE WHEN "STOK_TUTARI" ~ '^-?[0-9.]+$'
                         THEN CAST("STOK_TUTARI" AS FLOAT) ELSE 0 END) AS tutar,
+               MAX("URUN_SATICI_ADI")        AS urun_adi,
                MAX("TESLIM_NOKTASI_ACIKLAMA") AS ad
         FROM stok
         WHERE "DEPO_TUR" = 'MA'
           AND veri_tarihi ~ '^\\d{4}-\\d{2}-\\d{2}'
           AND "STOK_MIKTARI" ~ '^-?[0-9.]+$'
-        GROUP BY 1, 2
+        GROUP BY 1, 2, 3
       ),
-      ozet AS (
-        SELECT id,
-               MAX(ad)                                        AS ad,
-               MIN(veri_tarihi)                               AS ilk_kayit,
-               MAX(veri_tarihi) FILTER (WHERE miktar > 0)     AS son_stok_tarihi,
-               COUNT(*) FILTER (WHERE miktar > 0)             AS stoklu_gun,
-               COUNT(*)                                       AS kayit_gun
+      -- Mağaza seviyesi: SKU'lardan bağımsız kimlik ve geçmiş derinliği
+      nokta AS (
+        SELECT id, MAX(ad) AS ad, MIN(veri_tarihi) AS ilk_kayit,
+               COUNT(DISTINCT veri_tarihi) AS kayit_gun
         FROM ma GROUP BY id
       ),
+      sku_liste AS (
+        SELECT sku, MAX(urun_adi) AS urun_adi FROM ma GROUP BY sku
+      ),
+      ozet AS (
+        SELECT id, sku,
+               MAX(veri_tarihi) FILTER (WHERE miktar > 0) AS son_stok_tarihi,
+               COUNT(*) FILTER (WHERE miktar > 0)         AS stoklu_gun
+        FROM ma GROUP BY id, sku
+      ),
       guncel AS (
-        SELECT id, miktar AS guncel_stok, tutar AS guncel_tutar
+        SELECT id, sku, miktar AS guncel_stok, tutar AS guncel_tutar
         FROM ma WHERE veri_tarihi = $1
       ),
       -- Geçmiş satış ortalaması: payda, mağazanın İLK satışından satış
@@ -547,6 +558,7 @@ app.get('/api/stok-bulunurluk', async (req, res) => {
       -- mağazalar, hiç listelenmedikleri günlerle cezalandırılmıyor.
       sat AS (
         SELECT "StoreNumber" AS id,
+               "SupplierItemNumber" AS sku,
                SUM(CAST("QuantitySold" AS FLOAT)) AS toplam_qty,
                MIN("DateTransaction")             AS ilk_satis,
                MAX("DateTransaction")             AS son_satis,
@@ -554,16 +566,18 @@ app.get('/api/stok-bulunurluk', async (req, res) => {
         FROM gunluk_satis
         WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'
           AND "QuantitySold" ~ '^-?[0-9.]+$'
-        GROUP BY 1
+        GROUP BY 1, 2
       )
-      SELECT o.id,
-             COALESCE(m.magaza_adi, o.ad)                     AS magaza_adi,
+      SELECT n.id, sl.sku, sl.urun_adi,
+             COALESCE(m.magaza_adi, n.ad)                     AS magaza_adi,
              m.il, m.bolge,
-             ${tipCoalesce('m.tip', 'o.ad')}                  AS tip,
+             ${tipCoalesce('m.tip', 'n.ad')}                  AS tip,
              COALESCE(gc.guncel_stok, 0)                      AS guncel_stok,
              COALESCE(gc.guncel_tutar, 0)                     AS guncel_tutar,
-             (gc.id IS NOT NULL)                              AS guncel_kayit_var,
-             o.son_stok_tarihi, o.ilk_kayit, o.stoklu_gun, o.kayit_gun,
+             (o.id IS NOT NULL)                               AS sku_kaydi_var,
+             o.son_stok_tarihi, n.ilk_kayit,
+             COALESCE(o.stoklu_gun, 0)                        AS stoklu_gun,
+             n.kayit_gun,
              CASE WHEN o.son_stok_tarihi IS NULL THEN NULL
                   ELSE ($1::date - o.son_stok_tarihi::date) END AS stoksuz_gun,
              COALESCE(sa.toplam_qty, 0) AS toplam_qty,
@@ -572,15 +586,17 @@ app.get('/api/stok-bulunurluk', async (req, res) => {
              CASE WHEN sa.toplam_qty IS NULL OR sa.ilk_satis IS NULL THEN NULL
                   ELSE sa.toplam_qty
                        / GREATEST(($2::date - sa.ilk_satis::date) + 1, 1) END AS ort_gunluk_satis
-      FROM ozet o
-      LEFT JOIN magazalar m ON m.teslim_noktasi_id = o.id
-      LEFT JOIN guncel gc   ON gc.id = o.id
-      LEFT JOIN sat sa      ON sa.id = o.id
+      FROM nokta n
+      CROSS JOIN sku_liste sl
+      LEFT JOIN magazalar m ON m.teslim_noktasi_id = n.id
+      LEFT JOIN ozet o      ON o.id = n.id AND o.sku = sl.sku
+      LEFT JOIN guncel gc   ON gc.id = n.id AND gc.sku = sl.sku
+      LEFT JOIN sat sa      ON sa.id = n.id AND sa.sku = sl.sku
     `, [gecmis.son, satisSon || gecmis.son]);
 
     res.json({
       gecmis: { ilk: gecmis.ilk, son: gecmis.son, gun: Number(gecmis.gun), satisSon },
-      magazalar: rows.rows,
+      satirlar: rows.rows,
     });
   } catch(e) {
     console.error('stok-bulunurluk hata:', e.message);
