@@ -428,6 +428,68 @@ app.get('/api/magaza-tipi', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GÜNLÜK STOK DURUMU (SKU kırılımlı) ───────────────────────────────────────
+// Seçilen güne kadarki stok geçmişinden, mağaza × SKU bazında:
+//   miktar   — o gündeki stok
+//   bos_gun  — o SKU'nun rafta en son >0 görüldüğü günden bu yana geçen gün
+// Dağıtım merkezi / iade / bloke depoları HİÇ girmez (yalnızca DEPO_TUR='MA').
+app.get('/api/gunluk-stok-durum', async (req, res) => {
+  try {
+    const t = await pool.query(`
+      SELECT MAX(veri_tarihi) AS son FROM stok
+      WHERE veri_tarihi ~ '^\\d{4}-\\d{2}-\\d{2}'
+        AND ($1::text IS NULL OR veri_tarihi <= $1)
+    `, [req.query.tarih || null]);
+    const tarih = t.rows[0]?.son || null;
+    if (!tarih) return res.json({ tarih: null, satirlar: [] });
+
+    const rows = await pool.query(`
+      WITH ma AS (
+        SELECT "TESLIM_NOKTASI_ID" AS id,
+               "SATICI_URUN_KODU"  AS sku,
+               veri_tarihi,
+               SUM(CAST("STOK_MIKTARI" AS FLOAT))              AS miktar,
+               MAX("URUN_SATICI_ADI")                          AS urun_adi,
+               MAX("TESLIM_NOKTASI_ACIKLAMA")                  AS ad
+        FROM stok
+        WHERE "DEPO_TUR" = 'MA'
+          AND veri_tarihi ~ '^\\d{4}-\\d{2}-\\d{2}'
+          AND veri_tarihi <= $1
+          AND "STOK_MIKTARI" ~ '^-?[0-9.]+$'
+        GROUP BY 1, 2, 3
+      ),
+      ozet AS (
+        SELECT id, sku,
+               MAX(urun_adi)                              AS urun_adi,
+               MAX(ad)                                    AS ad,
+               MAX(veri_tarihi) FILTER (WHERE miktar > 0) AS son_stok_tarihi,
+               COUNT(*)                                   AS kayit_gun
+        FROM ma GROUP BY id, sku
+      ),
+      guncel AS (
+        SELECT id, sku, miktar FROM ma WHERE veri_tarihi = $1
+      )
+      SELECT o.id, o.sku, o.urun_adi,
+             COALESCE(m.magaza_adi, o.ad)  AS magaza_adi,
+             m.il, m.bolge,
+             ${tipCoalesce('m.tip', 'o.ad')} AS tip,
+             COALESCE(g.miktar, 0)         AS miktar,
+             (g.id IS NOT NULL)            AS kayit_var,
+             o.son_stok_tarihi, o.kayit_gun,
+             CASE WHEN o.son_stok_tarihi IS NULL THEN NULL
+                  ELSE ($1::date - o.son_stok_tarihi::date) END AS bos_gun
+      FROM ozet o
+      LEFT JOIN magazalar m ON m.teslim_noktasi_id = o.id
+      LEFT JOIN guncel g    ON g.id = o.id AND g.sku = o.sku
+    `, [tarih]);
+
+    res.json({ tarih, satirlar: rows.rows });
+  } catch(e) {
+    console.error('gunluk-stok-durum hata:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── STOK BULUNURLUĞU ─────────────────────────────────────────────────────────
 // Tamamen stok geçmişinden hesaplanır (satış verisi kullanılmaz).
 // Her mağaza teslim noktası (DEPO_TUR='MA') için:

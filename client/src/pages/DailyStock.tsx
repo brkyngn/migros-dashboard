@@ -1,548 +1,485 @@
-import { useEffect, useState, useMemo } from 'react';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, PieChart, Pie, Legend
-} from 'recharts';
-import type { StockRecord } from '../types';
+import { useEffect, useState, useMemo, Fragment } from 'react';
 import { formatNum } from '../utils/formatters';
+import { TYPE_ORDER, TYPE_COLORS } from '../utils/storeTypes';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
 
-const PROD_COLORS = ['#C0392B', '#1A3A5C', '#F5A623', '#2D6A4F', '#6D28D9', '#0891B2'];
+// ─── Tipler ──────────────────────────────────────────────────────────────────
 
-type LocType = 'magaza' | 'dm' | 'iade' | 'bloke';
-
-// DEPO_TUR: MA=Mağaza, A=Dağıtım Merkezi, I=İade Deposu, B=Bloke Deposu
-function locType(r: StockRecord): LocType {
-  const dt = (r.DEPO_TUR || '').toUpperCase().trim();
-  if (dt === 'MA') return 'magaza';
-  if (dt === 'A')  return 'dm';
-  if (dt === 'I')  return 'iade';
-  if (dt === 'B')  return 'bloke';
-  const a = (r.TESLIM_NOKTASI_ACIKLAMA || '').toUpperCase();
-  if (a.includes('BLOKE'))                        return 'bloke';
-  if (a.includes('İADE') || a.includes('IADE'))   return 'iade';
-  if (a.includes('DAĞITIM') || a.includes('DAGITIM') || / DM\b/.test(a)) return 'dm';
-  return 'magaza';
+interface Row {
+  id: string;
+  sku: string;
+  urun_adi: string;
+  magaza_adi: string;
+  il: string | null;
+  bolge: string | null;
+  tip: string;
+  miktar: number | string;
+  kayit_var: boolean;
+  son_stok_tarihi: string | null;
+  kayit_gun: number | string;
+  bos_gun: number | string | null;
 }
 
-function fmtTL(n: number) {
-  return Math.round(n).toLocaleString('tr-TR') + ' ₺';
+interface ApiResp { tarih: string | null; satirlar: Row[]; error?: string }
+
+// Mağaza başına SKU'lar tek satırda toplanır — tablo mağaza bazlı, kolonlar SKU bazlı
+interface SkuHucre { stok: number; bosGun: number | null; sonStok: string | null; kayitGun: number }
+interface Magaza {
+  id: string; ad: string; il: string | null; bolge: string; tip: string;
+  sku: Record<string, SkuHucre>;
+  bosSayisi: number;      // kaç SKU'nun rafı boş
+  enUzunBos: number;      // en uzun süredir boş olan SKU'nun gün sayısı
 }
 
-function stockStatus(sg: number, sm: number): { label: string; color: string; bg: string } {
-  if (sm === 0)       return { label: 'Sıfır Stok',   color: '#dc2626', bg: '#fef2f2' };
-  if (sg > 0 && sg < 7)  return { label: 'Kritik <7g',   color: '#d97706', bg: '#fffbeb' };
-  if (sg >= 7 && sg < 14) return { label: 'Uyarı 7-14g', color: '#2563eb', bg: '#eff6ff' };
-  if (sg >= 14 && sg < 30) return { label: 'Normal',      color: '#16a34a', bg: '#f0fdf4' };
-  if (sg >= 30 && sg < 60) return { label: 'Yüksek',      color: '#7c3aed', bg: '#f5f3ff' };
-  return { label: 'Aşırı 60+g', color: '#9333ea', bg: '#fdf4ff' };
+interface Agg {
+  magaza: number;
+  bos: Record<string, number>;        // sku → rafı boş mağaza sayısı
+  stok: Record<string, number>;       // sku → toplam stok
+  bosGunTop: Record<string, number>;  // sku → boş gün toplamı (ortalama için)
+  bosGunAdet: Record<string, number>;
+  tamBos: number;                     // tüm SKU'ları boş olan mağaza sayısı
 }
+
+type Gruplama = 'bolge-tip' | 'tip-bolge';
+
+// ─── Sabitler ────────────────────────────────────────────────────────────────
+
+const GRUPLAMALAR: { id: Gruplama; label: string; baslik: string; sutun: string }[] = [
+  { id: 'bolge-tip', label: '🗺️ Bölge → Tip', baslik: 'Coğrafi Bölge → Mağaza Tipi → Mağaza', sutun: 'Bölge / Tip / Mağaza' },
+  { id: 'tip-bolge', label: '🏬 Tip → Bölge', baslik: 'Mağaza Tipi → Coğrafi Bölge → Mağaza', sutun: 'Tip / Bölge / Mağaza' },
+];
+
+const SKU_RENK = ['#C0392B', '#1A3A5C', '#0891B2', '#6D28D9'];
+
+const num = (v: number | string | null | undefined) => Number(v || 0);
+
+// Uzun Migros ürün adını kısalt: "KITTYCADY ACTIVE CARBON 5L KEDI KUMU" → "Active Carbon"
+function kisaUrunAdi(ad: string, sku: string) {
+  const u = (ad || '').toUpperCase();
+  if (u.includes('ACTIVE CARBON')) return 'Active Carbon';
+  if (u.includes('MARSEILLE'))     return 'Marseille Breeze';
+  return (ad || sku).slice(0, 18);
+}
+
+function emptyAgg(): Agg {
+  return { magaza: 0, bos: {}, stok: {}, bosGunTop: {}, bosGunAdet: {}, tamBos: 0 };
+}
+function addToAgg(a: Agg, m: Magaza, skular: string[]) {
+  a.magaza++;
+  let bosSayisi = 0;
+  skular.forEach(sk => {
+    const h = m.sku[sk];
+    a.stok[sk] = (a.stok[sk] || 0) + (h?.stok ?? 0);
+    if (!h || h.stok <= 0) {
+      bosSayisi++;
+      a.bos[sk] = (a.bos[sk] || 0) + 1;
+      if (h?.bosGun != null) {
+        a.bosGunTop[sk]  = (a.bosGunTop[sk] || 0) + h.bosGun;
+        a.bosGunAdet[sk] = (a.bosGunAdet[sk] || 0) + 1;
+      }
+    }
+  });
+  if (bosSayisi === skular.length) a.tamBos++;
+}
+const ortBosGun = (a: Agg, sk: string) =>
+  (a.bosGunAdet[sk] || 0) > 0 ? (a.bosGunTop[sk] || 0) / a.bosGunAdet[sk] : 0;
+
+function formatDateTR(d: string | null) {
+  if (!d) return '—';
+  const [y, m, day] = d.slice(0, 10).split('-');
+  const months = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+  return `${parseInt(day)} ${months[parseInt(m)]} ${y}`;
+}
+
+// Boş gün sayısına göre renk — stok bulunurluk raporundaki kovalarla aynı eşikler
+function bosRenk(gun: number | null) {
+  if (gun === null) return '#6b7280';
+  if (gun <= 0)  return '#16a34a';
+  if (gun <= 7)  return '#eab308';
+  if (gun <= 14) return '#f97316';
+  if (gun <= 30) return '#dc2626';
+  return '#7f1d1d';
+}
+
+// ─── Bileşen ─────────────────────────────────────────────────────────────────
 
 export default function DailyStock() {
-  const [allDates, setAllDates]     = useState<string[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>('');
-  const [rows, setRows]             = useState<StockRecord[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [datesLoading, setDatesLoading] = useState(true);
+  const [dates, setDates]     = useState<string[]>([]);
+  const [tarih, setTarih]     = useState('');
+  const [data, setData]       = useState<ApiResp | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [gruplama, setGruplama] = useState<Gruplama>('bolge-tip');
+  const [sadeceBos, setSadeceBos] = useState(false);
+  const [sadeceHedef, setSadeceHedef] = useState(true);
+  const [arama, setArama] = useState('');
 
-  // Tarih listesi
   useEffect(() => {
     fetch('/api/db-stok-gecmis')
       .then(r => r.json())
-      .then((dates: string[]) => {
-        setAllDates(dates);
-        if (dates.length > 0) setSelectedDate(dates[0]);
-      })
-      .finally(() => setDatesLoading(false));
+      .then((d: string[]) => { setDates(d); if (d.length) setTarih(d[0]); })
+      .catch(() => {});
   }, []);
 
-  // Seçili tarih verisi
   useEffect(() => {
-    if (!selectedDate) return;
-    setLoading(true);
-    fetch(`/api/db-stok-tarih?tarih=${selectedDate}`)
+    if (!tarih) return;
+    setLoading(true); setError('');
+    fetch(`/api/gunluk-stok-durum?tarih=${tarih}`)
       .then(r => r.json())
-      .then(setRows)
+      .then((d: ApiResp) => { if (d.error) setError(d.error); else setData(d); })
+      .catch(e => setError(e instanceof Error ? e.message : 'Bilinmeyen hata'))
       .finally(() => setLoading(false));
-  }, [selectedDate]);
+  }, [tarih]);
 
-  // Lokasyonları türe göre ayır — mağaza / DM / iade / bloke
-  const { magazaRows, dmRows } = useMemo(() => {
-    const magaza: StockRecord[] = [], dm: StockRecord[] = [];
-    rows.forEach(r => {
-      const t = locType(r);
-      if (t === 'dm') dm.push(r);
-      else if (t === 'magaza') magaza.push(r);
-      // iade / bloke: ana panoya dahil edilmez
+  // Veride görülen SKU'lar — sabit kodlamak yerine gelen satırlardan türetiliyor
+  const skular = useMemo(() => {
+    if (!data) return [];
+    const m = new Map<string, string>();
+    data.satirlar.forEach(r => { if (!m.has(r.sku)) m.set(r.sku, kisaUrunAdi(r.urun_adi, r.sku)); });
+    return [...m.entries()]
+      .sort((a, b) => a[1].localeCompare(b[1], 'tr'))
+      .map(([sku, ad], i) => ({ sku, ad, renk: SKU_RENK[i % SKU_RENK.length] }));
+  }, [data]);
+
+  const skuIds = useMemo(() => skular.map(s => s.sku), [skular]);
+
+  // Satırları mağaza bazına çevir
+  const magazalar = useMemo<Magaza[]>(() => {
+    if (!data) return [];
+    const map = new Map<string, Magaza>();
+    data.satirlar.forEach(r => {
+      let m = map.get(r.id);
+      if (!m) {
+        m = {
+          id: r.id, ad: r.magaza_adi, il: r.il, bolge: r.bolge || 'Bilinmiyor',
+          tip: r.tip || 'Diğer', sku: {}, bosSayisi: 0, enUzunBos: 0,
+        };
+        map.set(r.id, m);
+      }
+      m.sku[r.sku] = {
+        stok: num(r.miktar),
+        bosGun: r.bos_gun === null || r.bos_gun === undefined ? null : num(r.bos_gun),
+        sonStok: r.son_stok_tarihi,
+        kayitGun: num(r.kayit_gun),
+      };
     });
-    return { magazaRows: magaza, dmRows: dm };
-  }, [rows]);
+    // Boş raf özetini hesapla
+    map.forEach(m => {
+      let bos = 0, enUzun = 0;
+      skuIds.forEach(sk => {
+        const h = m.sku[sk];
+        if (!h || h.stok <= 0) {
+          bos++;
+          const g = h?.bosGun ?? h?.kayitGun ?? 0;
+          if (g > enUzun) enUzun = g;
+        }
+      });
+      m.bosSayisi = bos; m.enUzunBos = enUzun;
+    });
+    return [...map.values()];
+  }, [data, skuIds]);
 
-  const stats = useMemo(() => {
-    let toplamStok = 0, toplamTutar = 0, gunlukSatis = 0, gunlukSatisTutar = 0, gunlukYukleme = 0;
-    const stokGunArr: number[] = [];
-    let sifir = 0, kritik = 0, uyari = 0, normal = 0, yuksek = 0, asiri = 0;
-    const ilMap: Record<string, { stok: number; satis: number; tutar: number }> = {};
-    const urunMap: Record<string, { stok: number; satis: number; tutar: number; sgSum: number; sgCnt: number; kod: string }> = {};
+  const HEDEF = useMemo(() => new Set(['MM', 'MMM', '5M', 'Macrocenter']), []);
 
-    magazaRows.forEach(r => {
-      const sm  = parseFloat(r.STOK_MIKTARI) || 0;
-      const st  = parseFloat(r.STOK_TUTARI) || 0;
-      const gs  = parseFloat(r.GUNLUK_SATIS_MIKTARI) || 0;
-      const gst = parseFloat(r.GUNLUK_SATIS_TUTARI) || 0;
-      const gy  = parseFloat(r.GUNLUK_YUKLEME_MIKTARI) || 0;
-      const sg  = parseFloat(r.STOK_GUN) || 0;
-      const il  = r.IL_ADI || 'Bilinmiyor';
-      const urun = r.URUN_SATICI_ADI || r.SATICI_URUN_KODU || '—';
+  const filtered = useMemo(() => {
+    const q = arama.trim().toLocaleLowerCase('tr');
+    return magazalar.filter(m => {
+      if (sadeceHedef && !HEDEF.has(m.tip)) return false;
+      if (sadeceBos && m.bosSayisi === 0) return false;
+      if (q && !(m.ad || '').toLocaleLowerCase('tr').includes(q)
+            && !(m.il || '').toLocaleLowerCase('tr').includes(q)) return false;
+      return true;
+    });
+  }, [magazalar, sadeceBos, sadeceHedef, arama, HEDEF]);
 
-      toplamStok += sm; toplamTutar += st;
-      gunlukSatis += gs; gunlukSatisTutar += gst; gunlukYukleme += gy;
-      if (sg > 0) stokGunArr.push(sg);
+  const total = useMemo(() => {
+    const a = emptyAgg();
+    filtered.forEach(m => addToAgg(a, m, skuIds));
+    return a;
+  }, [filtered, skuIds]);
 
-      if (sm === 0) sifir++;
-      else if (sg > 0 && sg < 7) kritik++;
-      else if (sg >= 7 && sg < 14) uyari++;
-      else if (sg >= 14 && sg < 30) normal++;
-      else if (sg >= 30 && sg < 60) yuksek++;
-      else asiri++;
+  const bosMagazaSayisi = useMemo(() => {
+    return magazalar.filter(m => (!sadeceHedef || HEDEF.has(m.tip)) && m.bosSayisi > 0).length;
+  }, [magazalar, sadeceHedef, HEDEF]);
 
-      if (!ilMap[il]) ilMap[il] = { stok: 0, satis: 0, tutar: 0 };
-      ilMap[il].stok += sm; ilMap[il].satis += gs; ilMap[il].tutar += st;
+  const tipUstte = gruplama === 'tip-bolge';
 
-      if (!urunMap[urun]) urunMap[urun] = { stok: 0, satis: 0, tutar: 0, sgSum: 0, sgCnt: 0, kod: r.SATICI_URUN_KODU || '—' };
-      urunMap[urun].stok += sm; urunMap[urun].satis += gs; urunMap[urun].tutar += st;
-      if (sg > 0) { urunMap[urun].sgSum += sg; urunMap[urun].sgCnt++; }
+  const tree = useMemo(() => {
+    const key1 = (m: Magaza) => tipUstte ? m.tip : m.bolge;
+    const key2 = (m: Magaza) => tipUstte ? m.bolge : m.tip;
+
+    const map: Record<string, { agg: Agg; alt: Record<string, { agg: Agg; magazalar: Magaza[] }> }> = {};
+    filtered.forEach(m => {
+      const k1 = key1(m), k2 = key2(m);
+      if (!map[k1]) map[k1] = { agg: emptyAgg(), alt: {} };
+      if (!map[k1].alt[k2]) map[k1].alt[k2] = { agg: emptyAgg(), magazalar: [] };
+      addToAgg(map[k1].agg, m, skuIds);
+      addToAgg(map[k1].alt[k2].agg, m, skuIds);
+      map[k1].alt[k2].magazalar.push(m);
     });
 
-    const ortStokGun = stokGunArr.length
-      ? Math.round(stokGunArr.reduce((a, b) => a + b, 0) / stokGunArr.length)
-      : 0;
+    const sirala = <T extends { ad: string; agg: Agg }>(nodes: T[], tip: boolean) =>
+      nodes.sort((a, b) => tip
+        ? TYPE_ORDER.indexOf(a.ad) - TYPE_ORDER.indexOf(b.ad)
+        : b.agg.tamBos - a.agg.tamBos || a.ad.localeCompare(b.ad, 'tr'));
 
-    const iller  = Object.entries(ilMap).sort((a, b) => b[1].stok - a[1].stok);
-    const urunler = Object.entries(urunMap).sort((a, b) => b[1].stok - a[1].stok);
-
-    const durumPie = [
-      { name: 'Sıfır',      value: sifir,  color: '#dc2626' },
-      { name: 'Kritik',     value: kritik, color: '#d97706' },
-      { name: 'Uyarı',      value: uyari,  color: '#2563eb' },
-      { name: 'Normal',     value: normal, color: '#16a34a' },
-      { name: 'Yüksek',     value: yuksek, color: '#7c3aed' },
-      { name: 'Aşırı',      value: asiri,  color: '#9333ea' },
-    ].filter(d => d.value > 0);
-
-    return {
-      toplamStok: Math.round(toplamStok),
-      toplamTutar: Math.round(toplamTutar),
-      gunlukSatis: Math.round(gunlukSatis),
-      gunlukSatisTutar: Math.round(gunlukSatisTutar),
-      gunlukYukleme: Math.round(gunlukYukleme),
-      ortStokGun,
-      sifir, kritik, uyari, normal, yuksek, asiri,
-      iller, urunler,
-      durumPie,
-      urunBarData: urunler.slice(0, 6).map(([name, d], i) => ({
-        name: name.length > 18 ? name.slice(0, 16) + '…' : name,
-        stok: Math.round(d.stok),
-        color: PROD_COLORS[i % PROD_COLORS.length],
+    return sirala(
+      Object.entries(map).map(([ad, d]) => ({
+        ad, agg: d.agg,
+        alt: sirala(
+          Object.entries(d.alt).map(([ad2, td]) => ({
+            ad: ad2, agg: td.agg,
+            // En uzun süredir boş raflar üstte
+            magazalar: td.magazalar.sort((a, b) =>
+              b.enUzunBos - a.enUzunBos || b.bosSayisi - a.bosSayisi || a.ad.localeCompare(b.ad, 'tr')),
+          })),
+          !tipUstte),
       })),
-    };
-  }, [magazaRows]);
+      tipUstte);
+  }, [filtered, tipUstte, skuIds]);
 
-  // DM (Dağıtım Merkezi) istatistikleri
-  const dmStats = useMemo(() => {
-    let toplamStok = 0, toplamTutar = 0, gunlukYukleme = 0;
-    // DM adı → { ürün kısa adı → stok }
-    const dmMap: Record<string, { il: string; urunler: Record<string, { stok: number; tutar: number; yukleme: number }> }> = {};
-    const urunSet = new Set<string>();
+  const toggle = (key: string) => setExpanded(e => {
+    const n = new Set(e);
+    if (n.has(key)) n.delete(key); else n.add(key);
+    return n;
+  });
 
-    dmRows.forEach(r => {
-      const sm = parseFloat(r.STOK_MIKTARI) || 0;
-      const st = parseFloat(r.STOK_TUTARI) || 0;
-      const gy = parseFloat(r.GUNLUK_YUKLEME_MIKTARI) || 0;
-      const dm = r.TESLIM_NOKTASI_ACIKLAMA || '—';
-      const urun = r.URUN_SATICI_ADI || r.SATICI_URUN_KODU || '—';
-      toplamStok += sm; toplamTutar += st; gunlukYukleme += gy;
-      urunSet.add(urun);
-      if (!dmMap[dm]) dmMap[dm] = { il: r.IL_ADI || '', urunler: {} };
-      if (!dmMap[dm].urunler[urun]) dmMap[dm].urunler[urun] = { stok: 0, tutar: 0, yukleme: 0 };
-      dmMap[dm].urunler[urun].stok += sm;
-      dmMap[dm].urunler[urun].tutar += st;
-      dmMap[dm].urunler[urun].yukleme += gy;
-    });
+  const gruplamaInfo = GRUPLAMALAR.find(g => g.id === gruplama)!;
 
-    const urunler = Array.from(urunSet).sort();
-    const merkezler = Object.entries(dmMap)
-      .map(([ad, d]) => ({
-        ad, il: d.il, urunler: d.urunler,
-        toplam: Object.values(d.urunler).reduce((s, u) => s + u.stok, 0),
-      }))
-      .sort((a, b) => a.ad.localeCompare(b.ad, 'tr'));
+  // ─── Render ────────────────────────────────────────────────────────────────
 
-    return {
-      toplamStok: Math.round(toplamStok),
-      toplamTutar: Math.round(toplamTutar),
-      gunlukYukleme: Math.round(gunlukYukleme),
-      adet: merkezler.length,
-      urunler, merkezler,
-    };
-  }, [dmRows]);
+  if (loading && !data) return <div className="p-8"><LoadingSkeleton rows={8} /></div>;
 
-  const formatDateTR = (d: string) => {
-    if (!d) return '';
-    const [y, m, day] = d.split('-');
-    const months = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
-    return `${parseInt(day)} ${months[parseInt(m)]} ${y}`;
-  };
-
-  if (datesLoading) return <div className="p-8"><LoadingSkeleton rows={6} /></div>;
-
-  if (allDates.length === 0) {
-    return (
-      <div className="p-8 flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="text-4xl mb-3">📭</div>
-          <div className="text-gray-500 font-medium">Veritabanında stok kaydı yok</div>
-          <a href="/tools" className="text-blue-600 underline text-sm mt-2 inline-block">Veri Araçları'ndan veri çek</a>
-        </div>
+  if (error) return (
+    <div className="p-8">
+      <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex gap-3">
+        <span className="text-xl">⚠️</span><div className="text-red-700 text-sm font-medium">{error}</div>
       </div>
-    );
-  }
+    </div>
+  );
+
+  if (!magazalar.length) return (
+    <div className="p-8 flex items-center justify-center h-64">
+      <div className="text-center">
+        <div className="text-4xl mb-3">📦</div>
+        <div className="text-gray-500 font-medium">Bu tarihte mağaza stok verisi yok</div>
+      </div>
+    </div>
+  );
+
+  // Her grup satırı için SKU hücreleri (stok · boş mağaza · ort. boş gün)
+  const grupSkuHucreleri = (a: Agg, kucuk: boolean) => skular.map(s => (
+    <Fragment key={s.sku}>
+      <td className={`${kucuk ? 'px-3 py-2' : 'px-3 py-2.5'} text-right font-mono text-gray-800`}>
+        {formatNum(Math.round(a.stok[s.sku] || 0))}
+      </td>
+      <td className={`${kucuk ? 'px-3 py-2' : 'px-3 py-2.5'} text-right font-mono ${(a.bos[s.sku] || 0) > 0 ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
+        {a.bos[s.sku] || 0}
+      </td>
+      <td className={`${kucuk ? 'px-3 py-2' : 'px-3 py-2.5'} text-right font-mono text-gray-500`}>
+        {ortBosGun(a, s.sku) > 0 ? `ort. ${ortBosGun(a, s.sku).toFixed(0)}` : '—'}
+      </td>
+    </Fragment>
+  ));
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6">
 
-      {/* Tarih seçici */}
-      <div className="flex items-center gap-4 flex-wrap">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-600">Tarih:</span>
-          <select
-            value={selectedDate}
-            onChange={e => setSelectedDate(e.target.value)}
-            className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm font-medium text-gray-800 outline-none shadow-sm hover:border-gray-300 transition-colors"
-          >
-            {allDates.map((d, i) => (
-              <option key={d} value={d}>{formatDateTR(d)}{i === 0 ? ' (En Güncel)' : ''}</option>
-            ))}
-          </select>
+      {/* Filtreler */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <select value={tarih} onChange={e => setTarih(e.target.value)}
+          className="bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-gray-400">
+          {dates.map(d => <option key={d} value={d}>{formatDateTR(d)}</option>)}
+        </select>
+
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+          {GRUPLAMALAR.map(g => (
+            <button key={g.id}
+              onClick={() => { setGruplama(g.id); setExpanded(new Set()); }}
+              title={g.baslik}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all
+                ${gruplama === g.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+              {g.label}
+            </button>
+          ))}
         </div>
-        {selectedDate && (
-          <div className="flex items-center gap-2 bg-sidebar/10 border border-sidebar/20 rounded-lg px-4 py-2">
-            <span className="text-sidebar text-sm font-semibold">{formatDateTR(selectedDate)}</span>
-            <span className="text-gray-400 text-xs">stok raporu</span>
-          </div>
-        )}
-        <div className="ml-auto text-xs text-gray-400">{magazaRows.length} mağaza · {dmStats.adet} DM · {allDates.length} günlük veri</div>
+
+        <button onClick={() => setSadeceBos(v => !v)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all
+            ${sadeceBos ? 'bg-ac text-white border-ac' : 'bg-white text-ac border-ac/40 hover:border-ac'}`}
+          title="En az bir SKU'su rafta olmayan mağazalar">
+          🚨 Sadece Raf Boş <span className="font-mono">{bosMagazaSayisi}</span>
+        </button>
+
+        <button onClick={() => setSadeceHedef(v => !v)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all
+            ${sadeceHedef ? 'bg-mb text-white border-mb' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}>
+          Sadece hedef tipler
+        </button>
+
+        <input value={arama} onChange={e => setArama(e.target.value)} placeholder="Mağaza veya il ara..."
+          className="bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-gray-400 w-52" />
+
+        <div className="ml-auto text-xs text-gray-400">
+          Yalnızca mağazalar — <b className="text-gray-600">dağıtım merkezleri hariç</b>
+        </div>
       </div>
 
-      {loading ? <LoadingSkeleton rows={8} /> : (
-        <>
-          {/* KPI Kartları */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-            {[
-              { label: 'Toplam Stok',    value: formatNum(stats.toplamStok),       icon: '📦', color: '#f5a623' },
-              { label: 'Stok Tutarı',    value: fmtTL(stats.toplamTutar),          icon: '💰', color: '#0f3460' },
-              { label: 'Günlük Satış',   value: formatNum(stats.gunlukSatis) + ' adet', icon: '📈', color: '#C0392B' },
-              { label: 'Ort. Stok Günü', value: stats.ortStokGun + ' gün',         icon: '📅', color: '#16a34a' },
-            ].map(card => (
-              <div key={card.label} className="bg-white rounded-xl border border-gray-200 p-5 flex items-start gap-4">
-                <div className="text-2xl">{card.icon}</div>
-                <div>
-                  <div className="text-xs text-gray-500 font-medium mb-1">{card.label}</div>
-                  <div className="text-2xl font-bold" style={{ color: card.color }}>{card.value}</div>
+      {/* SKU kartları */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="bg-white rounded-xl border border-gray-200 p-4" style={{ borderTop: '3px solid #1A3A5C' }}>
+          <div className="text-xs text-gray-500 font-medium mb-1">Mağaza</div>
+          <div className="text-2xl font-black text-gray-800 leading-none">{formatNum(total.magaza)}</div>
+          <div className="text-[11px] text-gray-400 mt-1">
+            {total.tamBos > 0 && <span className="text-red-600 font-semibold">{total.tamBos} mağazada hiç ürün yok</span>}
+          </div>
+        </div>
+        {skular.map(s => (
+          <div key={s.sku} className="bg-white rounded-xl border border-gray-200 p-4" style={{ borderTop: `3px solid ${s.renk}` }}>
+            <div className="text-xs font-bold mb-1" style={{ color: s.renk }}>{s.ad}</div>
+            <div className="flex items-end gap-4">
+              <div>
+                <div className="text-2xl font-black text-gray-800 leading-none">
+                  {formatNum(Math.round(total.stok[s.sku] || 0))}
+                </div>
+                <div className="text-[11px] text-gray-400 mt-1">adet stok</div>
+              </div>
+              <div className="ml-auto text-right">
+                <div className="text-2xl font-black leading-none text-red-600">{total.bos[s.sku] || 0}</div>
+                <div className="text-[11px] text-gray-400 mt-1">
+                  rafı boş
+                  {ortBosGun(total, s.sku) > 0 && ` · ort. ${ortBosGun(total, s.sku).toFixed(0)} gün`}
                 </div>
               </div>
-            ))}
-          </div>
-
-          {/* Durum kartları */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {[
-              { label: '⛔ Sıfır Stok',    val: stats.sifir,  color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
-              { label: '⚠️ Kritik <7g',    val: stats.kritik, color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
-              { label: '🔵 Uyarı 7-14g',   val: stats.uyari,  color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
-              { label: '✅ Normal 14-30g',  val: stats.normal, color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
-              { label: '📦 Yüksek 30-60g', val: stats.yuksek, color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
-              { label: '🔺 Aşırı 60+g',    val: stats.asiri,  color: '#9333ea', bg: '#fdf4ff', border: '#f0abfc' },
-            ].map(s => (
-              <div key={s.label} className="rounded-xl p-4 border" style={{ background: s.bg, borderColor: s.border }}>
-                <div className="text-xs font-semibold mb-1.5" style={{ color: s.color }}>{s.label}</div>
-                <div className="text-3xl font-bold leading-none" style={{ color: s.color }}>{s.val}</div>
-                <div className="text-xs text-gray-400 mt-1">lokasyon</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Grafikler */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-
-            {/* Ürün bazında bar */}
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <div className="font-semibold text-gray-800 mb-1">Ürün Bazında Stok</div>
-              <div className="text-xs text-gray-400 mb-4">Adet bazında dağılım</div>
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={stats.urunBarData} margin={{ left: 0, right: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                  <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} />
-                  <Tooltip
-                    formatter={(v: unknown) => [formatNum(Number(v)), 'Adet']}
-                    contentStyle={{ fontSize: 12, borderRadius: 8 }}
-                  />
-                  <Bar dataKey="stok" radius={[4, 4, 0, 0]} maxBarSize={50}>
-                    {stats.urunBarData.map((d, i) => (
-                      <Cell key={i} fill={d.color} fillOpacity={0.85} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Durum pie */}
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <div className="font-semibold text-gray-800 mb-1">Stok Durumu Dağılımı</div>
-              <div className="text-xs text-gray-400 mb-4">Lokasyon sayısına göre</div>
-              <ResponsiveContainer width="100%" height={240}>
-                <PieChart>
-                  <Pie
-                    data={stats.durumPie}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={95}
-                    paddingAngle={2}
-                  >
-                    {stats.durumPie.map((d, i) => (
-                      <Cell key={i} fill={d.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(v: unknown) => [formatNum(Number(v)), 'lokasyon']}
-                    contentStyle={{ fontSize: 12, borderRadius: 8 }}
-                  />
-                  <Legend iconSize={10} iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-                </PieChart>
-              </ResponsiveContainer>
             </div>
           </div>
+        ))}
+      </div>
 
-          {/* Tablolar */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-
-            {/* İl tablosu */}
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-                <div className="font-semibold text-gray-800">İl Bazında Stok</div>
-                <div className="text-xs text-gray-400">Top 10</div>
-              </div>
-              <div className="overflow-auto max-h-80">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide sticky top-0">
-                      <th className="px-4 py-2 text-left">#</th>
-                      <th className="px-4 py-2 text-left">İl</th>
-                      <th className="px-4 py-2 text-right">Stok</th>
-                      <th className="px-4 py-2 text-right">Gnlk Satış</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stats.iller.slice(0, 10).map(([il, d], i) => (
-                      <tr key={il} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-2.5 text-gray-400 text-xs font-medium w-8">{i + 1}</td>
-                        <td className="px-4 py-2.5">
-                          <div className="font-medium text-gray-800 text-xs">{il}</div>
-                          <div className="h-1 bg-gray-100 rounded-full mt-1 overflow-hidden">
-                            <div
-                              className="h-full rounded-full bg-navy"
-                              style={{ width: `${stats.iller[0] ? d.stok / stats.iller[0][1].stok * 100 : 0}%`, background: '#1A3A5C' }}
-                            />
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-bold text-gray-800">{formatNum(d.stok)}</td>
-                        <td className="px-4 py-2.5 text-right text-red-600 font-medium text-xs">{formatNum(d.satis)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Ürün tablosu */}
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-                <div className="font-semibold text-gray-800">Ürün Bazında Stok</div>
-                <div className="text-xs text-gray-400">{stats.urunler.length} ürün çeşidi</div>
-              </div>
-              <div className="overflow-auto max-h-80">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide sticky top-0">
-                      <th className="px-4 py-2 text-left">#</th>
-                      <th className="px-4 py-2 text-left">Ürün</th>
-                      <th className="px-4 py-2 text-right">Stok</th>
-                      <th className="px-4 py-2 text-right">Ort. Gün</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stats.urunler.slice(0, 10).map(([urun, d], i) => {
-                      const sg = d.sgCnt ? Math.round(d.sgSum / d.sgCnt) : 0;
-                      const st = stockStatus(sg, d.stok);
-                      return (
-                        <tr key={urun} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-2.5 text-gray-400 text-xs font-medium w-8">{i + 1}</td>
-                          <td className="px-4 py-2.5">
-                            <div className="font-medium text-gray-800 text-xs leading-tight max-w-[180px] truncate" title={urun}>{urun}</div>
-                            <div className="h-1 bg-gray-100 rounded-full mt-1 overflow-hidden">
-                              <div
-                                className="h-full rounded-full"
-                                style={{ width: `${stats.urunler[0] ? d.stok / stats.urunler[0][1].stok * 100 : 0}%`, background: PROD_COLORS[i % PROD_COLORS.length] }}
-                              />
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-bold text-gray-800">{formatNum(d.stok)}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            <span className="text-xs font-bold px-1.5 py-0.5 rounded" style={{ color: st.color, background: st.bg }}>
-                              {sg}g
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          {/* Tüm mağazalar */}
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <div className="font-semibold text-gray-800">Tüm Mağazalar</div>
-              <div className="text-xs text-gray-400">{magazaRows.length} mağaza (DM hariç)</div>
-            </div>
-            <div className="overflow-auto max-h-96">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide sticky top-0">
-                    <th className="px-4 py-2 text-left">İl</th>
-                    <th className="px-4 py-2 text-left">Ürün</th>
-                    <th className="px-4 py-2 text-right">Stok</th>
-                    <th className="px-4 py-2 text-right">Tutar</th>
-                    <th className="px-4 py-2 text-right">Gnlk Satış</th>
-                    <th className="px-4 py-2 text-right">Durum</th>
+      {/* Ağaç tablo */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="font-semibold text-gray-800">{gruplamaInfo.baslik}</div>
+          <div className="text-xs text-gray-400">{formatDateTR(data?.tarih ?? null)} · satıra tıklayarak kır</div>
+        </div>
+        <table className="w-full text-xs" style={{ minWidth: 560 + skular.length * 210 }}>
+          <thead>
+            <tr className="bg-gray-50 text-gray-500">
+              <th className="px-4 py-2 text-left font-semibold" rowSpan={2}>{gruplamaInfo.sutun}</th>
+              <th className="px-3 py-2 text-right font-semibold" rowSpan={2}>Mağaza</th>
+              {skular.map(s => (
+                <th key={s.sku} colSpan={3} className="px-3 py-2 text-center font-bold border-l border-gray-200"
+                    style={{ color: s.renk }}>
+                  {s.ad}
+                </th>
+              ))}
+            </tr>
+            <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+              {skular.map(s => (
+                <Fragment key={s.sku}>
+                  <th className="px-3 py-1.5 text-right font-semibold border-l border-gray-200">Stok</th>
+                  <th className="px-3 py-1.5 text-right font-semibold">Raf Boş</th>
+                  <th className="px-3 py-1.5 text-right font-semibold">Boş Gün</th>
+                </Fragment>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {tree.map(b => {
+              const bOpen = expanded.has(b.ad);
+              return (
+                <Fragment key={b.ad}>
+                  <tr onClick={() => toggle(b.ad)}
+                    className="border-t border-gray-100 bg-gray-50/60 hover:bg-gray-100 cursor-pointer font-semibold">
+                    <td className="px-4 py-2.5 text-gray-800">
+                      <span className={`inline-block w-3 text-gray-400 transition-transform ${bOpen ? 'rotate-90' : ''}`}>▸</span>
+                      <span className="ml-1"><NodeLabel ad={b.ad} tip={tipUstte} /></span>
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono text-gray-600">{b.agg.magaza}</td>
+                    {grupSkuHucreleri(b.agg, false)}
                   </tr>
-                </thead>
-                <tbody>
-                  {magazaRows.slice(0, 500).map((r, i) => {
-                    const sm = parseFloat(r.STOK_MIKTARI) || 0;
-                    const st = parseFloat(r.STOK_TUTARI) || 0;
-                    const gs = parseFloat(r.GUNLUK_SATIS_MIKTARI) || 0;
-                    const sg = parseFloat(r.STOK_GUN) || 0;
-                    const status = stockStatus(sg, sm);
+
+                  {bOpen && b.alt.map(t => {
+                    const tKey = b.ad + '|' + t.ad;
+                    const tOpen = expanded.has(tKey);
                     return (
-                      <tr key={i} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-2 text-xs text-gray-500">{r.IL_ADI || '—'}</td>
-                        <td className="px-4 py-2 text-xs font-medium text-gray-800 max-w-[200px] truncate" title={r.URUN_SATICI_ADI || r.SATICI_URUN_KODU}>
-                          {r.URUN_SATICI_ADI || r.SATICI_URUN_KODU || '—'}
-                        </td>
-                        <td className="px-4 py-2 text-right font-bold text-gray-800 text-xs">{formatNum(sm)}</td>
-                        <td className="px-4 py-2 text-right text-gray-500 text-xs">{fmtTL(st)}</td>
-                        <td className="px-4 py-2 text-right text-red-600 font-medium text-xs">{formatNum(gs)}</td>
-                        <td className="px-4 py-2 text-right">
-                          <span className="text-xs font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ color: status.color, background: status.bg }}>
-                            {status.label}
-                          </span>
-                        </td>
-                      </tr>
+                      <Fragment key={tKey}>
+                        <tr onClick={() => toggle(tKey)}
+                          className="border-t border-gray-50 hover:bg-gray-50 cursor-pointer">
+                          <td className="px-4 py-2 pl-10 text-gray-700 font-medium">
+                            <span className={`inline-block w-3 text-gray-400 transition-transform ${tOpen ? 'rotate-90' : ''}`}>▸</span>
+                            <span className="ml-1"><NodeLabel ad={t.ad} tip={!tipUstte} /></span>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-gray-600">{t.agg.magaza}</td>
+                          {grupSkuHucreleri(t.agg, true)}
+                        </tr>
+
+                        {tOpen && t.magazalar.map(m => (
+                          <tr key={tKey + '|' + m.id} className="border-t border-gray-50 hover:bg-blue-50/40">
+                            <td className="px-4 py-2 pl-16 text-gray-600">
+                              <div className="leading-tight">{m.ad}</div>
+                              <div className="text-[10px] text-gray-400">{m.il || '—'} · #{m.id}</div>
+                            </td>
+                            <td className="px-3 py-2"></td>
+                            {skular.map(s => {
+                              const h = m.sku[s.sku];
+                              const bos = !h || h.stok <= 0;
+                              const gun = h?.bosGun ?? null;
+                              return (
+                                <Fragment key={s.sku}>
+                                  <td className={`px-3 py-2 text-right font-mono border-l border-gray-100 ${bos ? 'text-red-600 font-bold' : 'text-gray-800'}`}>
+                                    {h ? formatNum(Math.round(h.stok)) : '—'}
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    {bos ? <span className="text-red-600 font-bold">●</span> : <span className="text-green-600">✓</span>}
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-mono font-bold" style={{ color: bosRenk(bos ? gun : 0) }}>
+                                    {!h ? <span title="Bu mağazada bu SKU hiç listelenmemiş">hiç</span>
+                                      : !bos ? '—'
+                                      : gun === null ? `≥${h.kayitGun}`
+                                      : gun}
+                                  </td>
+                                </Fragment>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </Fragment>
                     );
                   })}
-                  {magazaRows.length > 500 && (
-                    <tr><td colSpan={6} className="px-4 py-3 text-center text-xs text-gray-400">İlk 500 kayıt gösteriliyor · Toplam {formatNum(magazaRows.length)} mağaza</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                </Fragment>
+              );
+            })}
 
-          {/* Dağıtım Merkezleri (DM) */}
-          {dmStats.adet > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-4 rounded-full flex-shrink-0" style={{ background: '#d97706' }} />
-                <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Dağıtım Merkezleri (DM)</span>
-                <div className="flex-1 h-px bg-gray-200" />
-              </div>
+            <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold">
+              <td className="px-4 py-2.5 text-gray-800">TOPLAM</td>
+              <td className="px-3 py-2.5 text-right font-mono text-gray-900">{total.magaza}</td>
+              {grupSkuHucreleri(total, false)}
+            </tr>
+          </tbody>
+        </table>
+        {!tree.length && (
+          <div className="px-4 py-8 text-center text-gray-400 text-sm">Filtreye uyan mağaza yok</div>
+        )}
+      </div>
 
-              {/* DM özet KPI */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                {[
-                  { label: 'DM Sayısı',        value: String(dmStats.adet),              icon: '🏭', color: '#d97706' },
-                  { label: 'DM Toplam Stok',   value: formatNum(dmStats.toplamStok),     icon: '📦', color: '#f5a623' },
-                  { label: 'DM Stok Tutarı',   value: fmtTL(dmStats.toplamTutar),        icon: '💰', color: '#0f3460' },
-                  { label: 'DM Günlük Yükleme',value: formatNum(dmStats.gunlukYukleme),  icon: '🚚', color: '#16a34a' },
-                ].map(card => (
-                  <div key={card.label} className="bg-white rounded-xl border border-gray-200 p-5 flex items-start gap-4"
-                    style={{ borderTop: '3px solid #d97706' }}>
-                    <div className="text-2xl">{card.icon}</div>
-                    <div>
-                      <div className="text-xs text-gray-500 font-medium mb-1">{card.label}</div>
-                      <div className="text-2xl font-bold" style={{ color: card.color }}>{card.value}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* DM detay tablosu */}
-              <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-                  <div className="font-semibold text-gray-800">Dağıtım Merkezi Bazında Stok</div>
-                  <div className="text-xs text-gray-400">{dmStats.adet} merkez</div>
-                </div>
-                <table className="w-full text-xs min-w-[520px]">
-                  <thead>
-                    <tr className="bg-gray-50 text-gray-500 uppercase tracking-wide">
-                      <th className="px-4 py-2.5 text-left font-semibold">Dağıtım Merkezi</th>
-                      <th className="px-3 py-2.5 text-left font-semibold">İl</th>
-                      {dmStats.urunler.map(u => (
-                        <th key={u} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">{u.length > 20 ? u.slice(0, 18) + '…' : u}</th>
-                      ))}
-                      <th className="px-4 py-2.5 text-right font-semibold">Toplam</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dmStats.merkezler.map(m => (
-                      <tr key={m.ad} className="border-t border-gray-50 hover:bg-gray-50">
-                        <td className="px-4 py-2 text-gray-700 font-medium">{m.ad}</td>
-                        <td className="px-3 py-2 text-gray-500">{m.il}</td>
-                        {dmStats.urunler.map(u => {
-                          const stok = m.urunler[u]?.stok ?? 0;
-                          const has = u in m.urunler;
-                          return (
-                            <td key={u} className={`px-3 py-2 text-right font-mono ${!has ? 'text-gray-300' : stok === 0 ? 'text-red-600 font-bold' : 'text-gray-700'}`}>
-                              {has ? formatNum(Math.round(stok)) : '—'}
-                            </td>
-                          );
-                        })}
-                        <td className="px-4 py-2 text-right font-mono font-bold text-gray-800">{formatNum(Math.round(m.toplam))}</td>
-                      </tr>
-                    ))}
-                    {/* Toplam satırı */}
-                    <tr className="border-t-2 border-gray-200 bg-gray-50 font-bold">
-                      <td className="px-4 py-2.5 text-gray-800" colSpan={2}>TOPLAM ({dmStats.adet} DM)</td>
-                      {dmStats.urunler.map(u => {
-                        const t = dmStats.merkezler.reduce((s, m) => s + (m.urunler[u]?.stok ?? 0), 0);
-                        return <td key={u} className="px-3 py-2.5 text-right font-mono text-gray-800">{formatNum(Math.round(t))}</td>;
-                      })}
-                      <td className="px-4 py-2.5 text-right font-mono text-gray-900">{formatNum(dmStats.toplamStok)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </>
-      )}
+      <div className="text-[11px] text-gray-400">
+        <b>Boş Gün</b>: o SKU'nun ilgili mağazada rafta en son görüldüğü günden bu yana geçen gün.
+        <b> ≥N</b> = elimizdeki stok geçmişi boyunca o mağazada o SKU hiç görülmedi, gerçek süre en az N gün.
+      </div>
     </div>
+  );
+}
+
+// ─── Alt bileşen ─────────────────────────────────────────────────────────────
+
+function NodeLabel({ ad, tip }: { ad: string; tip: boolean }) {
+  if (!tip) return <>🗺️ {ad}</>;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="w-2.5 h-2.5 rounded-full" style={{ background: TYPE_COLORS[ad] || '#6b7280' }} />
+      {ad}
+    </span>
   );
 }
