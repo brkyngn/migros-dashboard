@@ -254,10 +254,11 @@ docker-compose up -d
 ## 📝 Konfigürasyon (.env)
 
 ```env
-# Migros Credentials
-MIGROS_USERNAME=30368
-MIGROS_PASSWORD=Bjkbjk1903!
-SATICI_ID=39286
+# Migros Credentials — GERÇEK DEĞERLERİ BURAYA YAZMA
+# Bunlar yalnızca ortam değişkeni olarak tutulur (lokalde .env, canlıda Render).
+MIGROS_USERNAME=<migros_kullanici_no>
+MIGROS_PASSWORD=<migros_api_sifresi>
+SATICI_ID=<satici_id>
 
 # Server
 PORT=3000
