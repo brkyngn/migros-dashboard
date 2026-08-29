@@ -428,6 +428,66 @@ app.get('/api/magaza-tipi', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── SATIŞ ÖZETİ (sunucu tarafı toplamlar) ────────────────────────────────────
+// /api/db-gunluk satır bazlı ve LIMIT 20000'li; istemcide toplanınca kümülatif
+// ciro sessizce eksik çıkıyordu. Buradaki toplamlar SQL'de, limitsiz hesaplanır
+// ve e-posta raporuyla aynı evreni kullanır (tüm satırlar, tarih filtresi yok).
+// Üç küme de küçük olduğu için grafikler de bunlardan beslenebilir.
+app.get('/api/satis-ozet', async (req, res) => {
+  const NUM = `"NetSalesValue" ~ '^-?[0-9.]+$' AND "QuantitySold" ~ '^-?[0-9.]+$'`;
+  const QTY = `SUM(CASE WHEN ${NUM} THEN CAST("QuantitySold"  AS FLOAT) ELSE 0 END)`;
+  const REV = `SUM(CASE WHEN ${NUM} THEN CAST("NetSalesValue" AS FLOAT) ELSE 0 END)`;
+  try {
+    const [urun, gun, magaza, genel] = await Promise.all([
+      pool.query(`
+        SELECT "SupplierItemNumber" AS sku,
+               MAX("SupplierItemName")             AS urun_adi,
+               ${QTY} AS qty, ${REV} AS rev,
+               COUNT(DISTINCT "StoreNumber")       AS magaza,
+               MIN("DateTransaction")              AS ilk,
+               MAX("DateTransaction")              AS son
+        FROM gunluk_satis GROUP BY 1`),
+      pool.query(`
+        SELECT "DateTransaction" AS tarih, "SupplierItemNumber" AS sku,
+               ${QTY} AS qty, ${REV} AS rev,
+               COUNT(DISTINCT "StoreNumber") AS magaza
+        FROM gunluk_satis
+        WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'
+        GROUP BY 1, 2 ORDER BY 1`),
+      pool.query(`
+        SELECT g."StoreNumber" AS id, "SupplierItemNumber" AS sku,
+               MAX(g."StoreName") AS magaza_adi, m.il, m.bolge,
+               ${tipCoalesce('m.tip', 'g."StoreName"')} AS tip,
+               ${QTY} AS qty, ${REV} AS rev,
+               MAX(g."DateTransaction") AS son_satis
+        FROM gunluk_satis g
+        LEFT JOIN magazalar m ON m.teslim_noktasi_id = g."StoreNumber"
+        GROUP BY g."StoreNumber", "SupplierItemNumber", m.il, m.bolge, m.tip`),
+      // Toplamın kaçı bozuk tarihli satırlardan geliyor — iki rapor ayrışırsa
+      // farkın buradan gelip gelmediği tek bakışta görülsün diye ayrı veriliyor.
+      pool.query(`
+        SELECT COUNT(DISTINCT "StoreNumber") AS magaza_sayisi,
+               COUNT(DISTINCT "DateTransaction") FILTER
+                 (WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}') AS gun_sayisi,
+               COUNT(*) FILTER (WHERE "DateTransaction" !~ '^\\d{4}-\\d{2}-\\d{2}'
+                                   OR "DateTransaction" IS NULL) AS bozuk_tarih_satir,
+               COUNT(*) FILTER (WHERE NOT (${NUM}))               AS sayisal_olmayan_satir,
+               COUNT(*) AS toplam_satir
+        FROM gunluk_satis`),
+    ]);
+
+    res.json({
+      urunler: urun.rows,
+      gunluk:  gun.rows,
+      magazalar: magaza.rows,
+      genel: genel.rows[0],
+    });
+  } catch(e) {
+    console.error('satis-ozet hata:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── GÜNLÜK STOK DURUMU (SKU kırılımlı) ───────────────────────────────────────
 // Seçilen güne kadarki stok geçmişinden, mağaza × SKU bazında:
 //   miktar   — o gündeki stok

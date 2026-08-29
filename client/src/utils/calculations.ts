@@ -94,3 +94,27 @@ export const groupByDay = (sales: DailySale[]) => {
       return { date: date.slice(5), ...data, toplam: total };
     });
 };
+
+// Sunucu tarafı satış özetinden ürün tablosu. groupByProduct'ın aksine
+// LIMIT'e takılmaz — kümülatif rakamlar için bunu kullan.
+export const productsFromOzet = (
+  urunler: { sku: string; qty: string; rev: string; magaza: string }[]
+): ProductSummary[] => {
+  const map: Record<string, { qty: number; rev: number; stores: number }> = {};
+  urunler.forEach(u => {
+    map[u.sku] = { qty: Number(u.qty || 0), rev: Number(u.rev || 0), stores: Number(u.magaza || 0) };
+  });
+  const totalQty = PRODUCTS.reduce((s, p) => s + (map[p.sku]?.qty ?? 0), 0);
+  const totalRev = PRODUCTS.reduce((s, p) => s + (map[p.sku]?.rev ?? 0), 0);
+  return PRODUCTS.map(p => {
+    const d = map[p.sku] || { qty: 0, rev: 0, stores: 0 };
+    return {
+      sku: p.sku, name: p.name, color: p.color,
+      quantity: Math.round(d.qty), revenue: Math.round(d.rev),
+      stores: d.stores,
+      avgPrice: d.qty > 0 ? d.rev / d.qty : 0,
+      shareQty: totalQty > 0 ? d.qty / totalQty * 100 : 0,
+      shareRevenue: totalRev > 0 ? d.rev / totalRev * 100 : 0,
+    };
+  });
+};

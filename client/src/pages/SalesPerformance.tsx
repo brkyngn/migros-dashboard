@@ -51,6 +51,10 @@ export default function SalesPerformance() {
 
   if (loading) return <div className="p-8"><LoadingSkeleton rows={8} /></div>;
 
+  // /api/db-gunluk satır başına LIMIT 20000 uyguluyor. Tam sayıda satır
+  // geldiyse veri kırpılmış demektir; toplamlar sessizce eksik kalmasın.
+  const kirpik = all.length >= 20000;
+
   const products = groupByProduct(sales);
   const dailyData = groupByDay(sales);
   const dowData = groupByDayOfWeek(sales);
@@ -94,6 +98,15 @@ export default function SalesPerformance() {
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6">
+
+      {kirpik && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-800 text-xs">
+          ⚠️ Bu sayfa satır bazlı çalışıyor ve sunucu en fazla 20.000 satır döndürüyor;
+          yalnızca <b>en yeni {formatNum(all.length)} satır</b> yüklendi. Daha eski günler
+          bu sayfadaki toplamlara girmiyor. Kümülatif rakamlar için
+          <b> Yönetim Özeti</b> sayfasını kullanın — orada toplamlar sunucuda hesaplanıyor.
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">

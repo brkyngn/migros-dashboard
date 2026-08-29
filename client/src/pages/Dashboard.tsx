@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { fetchDailySales, fetchStockReport } from '../api/migros';
+import { fetchDailySales, fetchStockReport, fetchSatisOzet } from '../api/migros';
+import type { SatisOzet } from '../api/migros';
 import type { DailySale, StockRecord, Page } from '../types';
-import { groupByProduct, groupByWeek, calcStockStatus, SKU_AC, SKU_MB } from '../utils/calculations';
+import { productsFromOzet, groupByWeek, calcStockStatus, SKU_AC, SKU_MB } from '../utils/calculations';
 import { formatTL, formatNum, formatPct } from '../utils/formatters';
 import KPICard from '../components/common/KPICard';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
@@ -12,21 +13,26 @@ interface Props { onNavigate: (page: Page, filter?: string) => void; }
 export default function Dashboard({ onNavigate }: Props) {
   const [sales, setSales] = useState<DailySale[]>([]);
   const [stock, setStock] = useState<StockRecord[]>([]);
+  const [ozet, setOzet]   = useState<SatisOzet | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([fetchDailySales(), fetchStockReport()])
-      .then(([s, st]) => { setSales(s); setStock(st); })
+    Promise.all([fetchDailySales(), fetchStockReport(), fetchSatisOzet()])
+      .then(([s, st, oz]) => { setSales(s); setStock(st); setOzet(oz); })
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="p-8"><LoadingSkeleton rows={6} /></div>;
 
-  const products = groupByProduct(sales);
-  const totalRevenue = products.reduce((s, p) => s + p.revenue, 0);
-  const totalQty = products.reduce((s, p) => s + p.quantity, 0);
-  const allStores = new Set(sales.map(s => s.StoreNumber)).size;
-  const days = new Set(sales.map(s => s.DateTransaction.slice(0, 10))).size;
+  // Kümülatif rakamlar sunucudan; istemcideki `sales` LIMIT 20000 ile kırpık
+  // geldiği için burada toplanırsa ciro eksik çıkar (e-postayla uyuşmaz).
+  const izlenen = new Set([SKU_AC, SKU_MB]);
+  const ozetUrun = (ozet?.urunler ?? []).filter(u => izlenen.has(u.sku));
+  const products = productsFromOzet(ozetUrun);
+  const totalRevenue = ozetUrun.reduce((s, u) => s + Number(u.rev || 0), 0);
+  const totalQty     = ozetUrun.reduce((s, u) => s + Number(u.qty || 0), 0);
+  const allStores    = Number(ozet?.genel?.magaza_sayisi || 0);
+  const days         = Number(ozet?.genel?.gun_sayisi || 0);
   const avgDailyRevenue = days > 0 ? totalRevenue / days : 0;
 
   const stockStatus = { zero: 0, critical: 0, warning: 0, healthy: 0 };
@@ -38,7 +44,7 @@ export default function Dashboard({ onNavigate }: Props) {
   });
 
   const weeklyData = groupByWeek(sales);
-  const empty = sales.length === 0;
+  const empty = sales.length === 0 && !ozetUrun.length;
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6">
