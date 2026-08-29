@@ -1,8 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { fetchDailySales } from '../api/migros';
-import type { DailySale } from '../types';
-import { groupByProduct, groupByDay, groupByDayOfWeek, PRODUCTS, SKU_AC, SKU_MB } from '../utils/calculations';
+import type { SatisOzet } from '../api/migros';
+import { productsFromOzet, gunlukSeriFromOzet, haftaninGunuFromOzet, PRODUCTS, SKU_AC, SKU_MB } from '../utils/calculations';
 import { formatTL, formatNum, formatPct } from '../utils/formatters';
 import DataTable from '../components/common/DataTable';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
@@ -15,98 +14,123 @@ const PERIODS = [
 ];
 
 export default function SalesPerformance() {
-  const [all, setAll] = useState<DailySale[]>([]);
+  const [ozet, setOzet]     = useState<SatisOzet | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hata, setHata]     = useState('');
   const [period, setPeriod] = useState(30);
   const [skuFilter, setSkuFilter] = useState('all');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const isCustom = !!(customStart && customEnd);
 
+  // gun × SKU serisi dönem filtresinden ETKİLENMEZ, daima tüm geçmiştir;
+  // tarih seçicinin sınırları ve "son N gün" hesabı buradan türer.
+  // urunler'den türetmek, veri içermeyen bir dönem seçildiğinde sonTarih'i
+  // boşaltıp sonsuz yeniden-çekim döngüsü yaratırdı.
+  const tumGunler = useMemo(() => ozet?.gunluk ?? [], [ozet]);
+
+  // "Son 30 gün" bugüne değil son satış gününe göre — veri geriden gelebiliyor
+  const sonTarih = tumGunler.length ? tumGunler[tumGunler.length - 1].tarih : '';
+
+  const [from, to] = useMemo(() => {
+    if (isCustom) return [customStart, customEnd];
+    if (!period || !sonTarih) return ['', ''];
+    const d = new Date(sonTarih + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - (period - 1));
+    return [d.toISOString().slice(0, 10), sonTarih];
+  }, [isCustom, customStart, customEnd, period, sonTarih]);
+
+  // Toplamlar ve mağaza kırılımı sunucuda, dönem filtresiyle hesaplanır.
+  // (Eskiden tüm satırlar çekilip istemcide toplanıyordu; /api/db-gunluk
+  //  LIMIT 20000 uyguladığı için eski günler sessizce toplama girmiyordu.)
   useEffect(() => {
-    fetchDailySales().then(setAll).finally(() => setLoading(false));
-  }, []);
+    let iptal = false;
+    // Dönem değişiminde loading'e düşmüyoruz: eski veri ekranda kalsın,
+    // grafikler her tıklamada boşalıp geri gelmesin.
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to)   qs.set('to', to);
+    fetch(`/api/satis-ozet?${qs}`)
+      .then(r => r.json())
+      .then((d: SatisOzet & { error?: string }) => {
+        if (iptal) return;
+        if (d.error) setHata(d.error); else { setOzet(d); setHata(''); }
+      })
+      .catch(e => { if (!iptal) setHata(e instanceof Error ? e.message : 'Bilinmeyen hata'); })
+      .finally(() => { if (!iptal) setLoading(false); });
+    return () => { iptal = true; };
+  }, [from, to]);
 
-  // En erken / en geç tarih (input min/max için)
   const dateRange = useMemo(() => {
-    if (!all.length) return { min: '', max: '' };
-    const dates = all.map(s => s.DateTransaction.slice(0, 10)).sort();
-    return { min: dates[0], max: dates[dates.length - 1] };
-  }, [all]);
+    if (!tumGunler.length) return { min: '', max: '' };
+    const t = tumGunler.map(g => g.tarih).sort();
+    return { min: t[0], max: t[t.length - 1] };
+  }, [tumGunler]);
 
-  const sales = useMemo(() => {
-    let d = all;
-    if (isCustom) {
-      d = d.filter(s => {
-        const date = s.DateTransaction.slice(0, 10);
-        return date >= customStart && date <= customEnd;
-      });
-    } else if (period > 0) {
-      const cutoff = new Date(Date.now() - period * 86400000).toISOString().slice(0, 10);
-      d = d.filter(s => s.DateTransaction.slice(0, 10) >= cutoff);
-    }
-    if (skuFilter !== 'all') d = d.filter(s => s.SupplierItemNumber === skuFilter);
-    return d;
-  }, [all, period, skuFilter, customStart, customEnd, isCustom]);
+  // Grafikler dönem + SKU filtresine göre kırpılır
+  const donemGunler = useMemo(() => tumGunler.filter(g => {
+    if (from && g.tarih < from) return false;
+    if (to   && g.tarih > to)   return false;
+    if (skuFilter !== 'all' && g.sku !== skuFilter) return false;
+    return true;
+  }), [tumGunler, from, to, skuFilter]);
 
-  if (loading) return <div className="p-8"><LoadingSkeleton rows={8} /></div>;
+  if (loading && !ozet) return <div className="p-8"><LoadingSkeleton rows={8} /></div>;
 
-  // /api/db-gunluk satır başına LIMIT 20000 uyguluyor. Tam sayıda satır
-  // geldiyse veri kırpılmış demektir; toplamlar sessizce eksik kalmasın.
-  const kirpik = all.length >= 20000;
+  if (hata) return (
+    <div className="p-8">
+      <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex gap-3">
+        <span className="text-xl">⚠️</span><div className="text-red-700 text-sm font-medium">{hata}</div>
+      </div>
+    </div>
+  );
 
-  const products = groupByProduct(sales);
-  const dailyData = groupByDay(sales);
-  const dowData = groupByDayOfWeek(sales);
+  const dailyData = gunlukSeriFromOzet(donemGunler);
+  const dowData   = haftaninGunuFromOzet(donemGunler);
 
-  // Toplam istatistikler
-  const totalQty  = products.reduce((s, p) => s + p.quantity, 0);
-  const totalRev  = products.reduce((s, p) => s + p.revenue, 0);
-  const totalStores = new Set(sales.map(s => s.StoreNumber)).size;
+  const seciliSku = (sku: string) => skuFilter === 'all' || sku === skuFilter;
+  const donemUrun = (ozet?.urunler ?? []).filter(u => seciliSku(u.sku));
+  const products  = productsFromOzet(donemUrun);
+
+  const totalQty = products.reduce((s, p) => s + p.quantity, 0);
+  const totalRev = products.reduce((s, p) => s + p.revenue, 0);
   const totalAvgPrice = totalQty > 0 ? totalRev / totalQty : 0;
 
-  // Top stores
+  // Mağaza kırılımı zaten dönem filtreli geldiği için benzersiz id saymak yeter
+  const donemMagaza = (ozet?.magazalar ?? []).filter(m => seciliSku(m.sku));
+  const totalStores = new Set(donemMagaza.map(m => m.id)).size;
+
   const storeMap: Record<string, { store: string; [key: string]: number | string }> = {};
-  sales.forEach(s => {
-    const k = s.StoreName || s.StoreNumber;
-    if (!storeMap[k]) storeMap[k] = { store: k, totalQty: 0, totalRev: 0, sku: s.SupplierItemNumber };
-    (storeMap[k] as Record<string, number | string>).totalQty = ((storeMap[k] as Record<string, number | string>).totalQty as number) + (parseFloat(s.QuantitySold) || 0);
-    (storeMap[k] as Record<string, number | string>).totalRev = ((storeMap[k] as Record<string, number | string>).totalRev as number) + (parseFloat(s.NetSalesValue) || 0);
+  donemMagaza.forEach(m => {
+    const k = m.magaza_adi || m.id;
+    if (!storeMap[k]) storeMap[k] = { store: k, totalQty: 0, totalRev: 0, sku: m.sku };
+    storeMap[k].totalQty = (storeMap[k].totalQty as number) + Number(m.qty || 0);
+    storeMap[k].totalRev = (storeMap[k].totalRev as number) + Number(m.rev || 0);
   });
-  const topStores = Object.values(storeMap).sort((a, b) => (b.totalRev as number) - (a.totalRev as number)).slice(0, 20);
+  const topStores = Object.values(storeMap)
+    .sort((a, b) => (b.totalRev as number) - (a.totalRev as number)).slice(0, 20);
   const maxStoreQty = topStores[0] ? (topStores[0].totalQty as number) : 1;
 
-  // Periodic analysis
+  // Ayın 1-10 / 11-20 / 21-31 dilimleri
   const periods3 = [
     { label: '1–10', from: 1, to: 10 },
     { label: '11–20', from: 11, to: 20 },
     { label: '21–31', from: 21, to: 31 },
   ].map(p => {
-    const filtered = sales.filter(s => {
-      const raw = new Date(s.DateTransaction.slice(0, 10) + 'T00:00:00Z');
-      if (isNaN(raw.getTime())) return false;
-      const day = raw.getUTCDate();
-      return day >= p.from && day <= p.to;
+    const dilim = donemGunler.filter(g => {
+      const gun = parseInt(g.tarih.slice(8, 10), 10);
+      return gun >= p.from && gun <= p.to;
     });
     return {
       ...p,
-      qty: filtered.reduce((s, r) => s + (parseFloat(r.QuantitySold) || 0), 0),
-      rev: filtered.reduce((s, r) => s + (parseFloat(r.NetSalesValue) || 0), 0),
+      qty: dilim.reduce((s, r) => s + Number(r.qty || 0), 0),
+      rev: dilim.reduce((s, r) => s + Number(r.rev || 0), 0),
     };
   });
   const maxRev = Math.max(...periods3.map(p => p.rev));
 
   return (
     <div className="p-4 md:p-8 space-y-4 md:space-y-6">
-
-      {kirpik && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-800 text-xs">
-          ⚠️ Bu sayfa satır bazlı çalışıyor ve sunucu en fazla 20.000 satır döndürüyor;
-          yalnızca <b>en yeni {formatNum(all.length)} satır</b> yüklendi. Daha eski günler
-          bu sayfadaki toplamlara girmiyor. Kümülatif rakamlar için
-          <b> Yönetim Özeti</b> sayfasını kullanın — orada toplamlar sunucuda hesaplanıyor.
-        </div>
-      )}
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">

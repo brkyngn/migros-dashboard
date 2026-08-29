@@ -435,7 +435,7 @@ app.get('/api/magaza-tipi', async (req, res) => {
 // Üç küme de küçük olduğu için grafikler de bunlardan beslenebilir.
 app.get('/api/satis-ozet', async (req, res) => {
   const hatalar = [];
-  const guvenli = (sql) => pool.query(sql).catch(e => {
+  const guvenli = (sql, params) => pool.query(sql, params).catch(e => {
     console.error('satis-ozet alt sorgu hatası:', e.message);
     hatalar.push(e.message);
     return { rows: [] };
@@ -443,6 +443,20 @@ app.get('/api/satis-ozet', async (req, res) => {
   const NUM = `"NetSalesValue" ~ '^-?[0-9.]+$' AND "QuantitySold" ~ '^-?[0-9.]+$'`;
   const QTY = `SUM(CASE WHEN ${NUM} THEN CAST("QuantitySold"  AS FLOAT) ELSE 0 END)`;
   const REV = `SUM(CASE WHEN ${NUM} THEN CAST("NetSalesValue" AS FLOAT) ELSE 0 END)`;
+
+  // İsteğe bağlı dönem filtresi. DateTransaction TEXT ve ISO formatta olduğu
+  // için metin karşılaştırması doğru sıralar; bozuk tarihli satırlar filtre
+  // verildiğinde regex koşuluyla zaten dışarıda kalır.
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+  const from = ISO.test(req.query.from || '') ? req.query.from : null;
+  const to   = ISO.test(req.query.to   || '') ? req.query.to   : null;
+  const params = [];
+  let donem = '';
+  if (from || to) {
+    donem += ` AND "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'`;
+    if (from) { params.push(from); donem += ` AND "DateTransaction" >= $${params.length}`; }
+    if (to)   { params.push(to);   donem += ` AND "DateTransaction" <= $${params.length}`; }
+  }
   try {
     // Sorgular birbirinden bağımsız: biri hata verirse yalnızca o küme boş
     // döner, yanıtın tamamı çökmez (Dashboard KPI'ları urunler+genel'e bakıyor).
@@ -454,14 +468,14 @@ app.get('/api/satis-ozet', async (req, res) => {
                COUNT(DISTINCT "StoreNumber")       AS magaza,
                MIN("DateTransaction")              AS ilk,
                MAX("DateTransaction")              AS son
-        FROM gunluk_satis GROUP BY 1`),
+        FROM gunluk_satis WHERE 1=1${donem} GROUP BY 1`, params),
       guvenli(`
         SELECT "DateTransaction" AS tarih, "SupplierItemNumber" AS sku,
                ${QTY} AS qty, ${REV} AS rev,
                COUNT(DISTINCT "StoreNumber") AS magaza
         FROM gunluk_satis
         WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'
-        GROUP BY 1, 2 ORDER BY 1`),
+        GROUP BY 1, 2 ORDER BY 1`), // dönemden bağımsız: daima tüm geçmiş
       guvenli(`
         SELECT g."StoreNumber" AS id, "SupplierItemNumber" AS sku,
                MAX(g."StoreName") AS magaza_adi, m.il, m.bolge,
@@ -470,7 +484,10 @@ app.get('/api/satis-ozet', async (req, res) => {
                MAX(g."DateTransaction") AS son_satis
         FROM gunluk_satis g
         LEFT JOIN magazalar m ON m.teslim_noktasi_id = g."StoreNumber"
-        GROUP BY g."StoreNumber", "SupplierItemNumber", m.il, m.bolge, m.tip`),
+        WHERE 1=1${donem}
+        GROUP BY g."StoreNumber", "SupplierItemNumber", m.il, m.bolge, m.tip`, params),
+      // Bu blok DAİMA tüm veriyi sayar (dönem filtresi uygulanmaz): bozuk
+      // tarihli satır sayacı, ISO filtresi eklenirse tanımı gereği hep 0 çıkar.
       // Toplamın kaçı bozuk tarihli satırlardan geliyor — iki rapor ayrışırsa
       // farkın buradan gelip gelmediği tek bakışta görülsün diye ayrı veriliyor.
       guvenli(`

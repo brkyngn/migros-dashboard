@@ -118,3 +118,35 @@ export const productsFromOzet = (
     };
   });
 };
+
+// ─── Sunucu özeti (satis-ozet) tabanlı gruplayıcılar ─────────────────────────
+// groupByDay / groupByDayOfWeek satır bazlı çalışıyor ve /api/db-gunluk'un
+// LIMIT 20000'ine takılıyor. Aşağıdakiler gün × SKU özetinden çalışır, kırpılmaz.
+
+export interface OzetGun { tarih: string; sku: string; qty: string; rev: string; magaza: string }
+
+export const gunlukSeriFromOzet = (rows: OzetGun[]) => {
+  const map: Record<string, Record<string, number>> = {};
+  rows.forEach(r => {
+    if (!map[r.tarih]) map[r.tarih] = {};
+    map[r.tarih][r.sku] = (map[r.tarih][r.sku] || 0) + Number(r.qty || 0);
+  });
+  return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, d]) => ({
+      date: date.slice(5), tamTarih: date, ...d,
+      toplam: (d[SKU_AC] || 0) + (d[SKU_MB] || 0),
+    }));
+};
+
+export const haftaninGunuFromOzet = (rows: OzetGun[]) => {
+  const days = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+  const map: Record<string, Record<string, number>> = {};
+  days.forEach(d => { map[d] = {}; });
+  rows.forEach(r => {
+    const d2 = new Date(r.tarih + 'T00:00:00Z');
+    if (isNaN(d2.getTime())) return;
+    const day = days[(d2.getUTCDay() + 6) % 7];
+    map[day][r.sku] = (map[day][r.sku] || 0) + Number(r.qty || 0);
+  });
+  return days.map(d => ({ day: d, ...map[d] }));
+};
