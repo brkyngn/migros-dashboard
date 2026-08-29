@@ -434,12 +434,20 @@ app.get('/api/magaza-tipi', async (req, res) => {
 // ve e-posta raporuyla aynı evreni kullanır (tüm satırlar, tarih filtresi yok).
 // Üç küme de küçük olduğu için grafikler de bunlardan beslenebilir.
 app.get('/api/satis-ozet', async (req, res) => {
+  const hatalar = [];
+  const guvenli = (sql) => pool.query(sql).catch(e => {
+    console.error('satis-ozet alt sorgu hatası:', e.message);
+    hatalar.push(e.message);
+    return { rows: [] };
+  });
   const NUM = `"NetSalesValue" ~ '^-?[0-9.]+$' AND "QuantitySold" ~ '^-?[0-9.]+$'`;
   const QTY = `SUM(CASE WHEN ${NUM} THEN CAST("QuantitySold"  AS FLOAT) ELSE 0 END)`;
   const REV = `SUM(CASE WHEN ${NUM} THEN CAST("NetSalesValue" AS FLOAT) ELSE 0 END)`;
   try {
+    // Sorgular birbirinden bağımsız: biri hata verirse yalnızca o küme boş
+    // döner, yanıtın tamamı çökmez (Dashboard KPI'ları urunler+genel'e bakıyor).
     const [urun, gun, magaza, genel] = await Promise.all([
-      pool.query(`
+      guvenli(`
         SELECT "SupplierItemNumber" AS sku,
                MAX("SupplierItemName")             AS urun_adi,
                ${QTY} AS qty, ${REV} AS rev,
@@ -447,17 +455,17 @@ app.get('/api/satis-ozet', async (req, res) => {
                MIN("DateTransaction")              AS ilk,
                MAX("DateTransaction")              AS son
         FROM gunluk_satis GROUP BY 1`),
-      pool.query(`
+      guvenli(`
         SELECT "DateTransaction" AS tarih, "SupplierItemNumber" AS sku,
                ${QTY} AS qty, ${REV} AS rev,
                COUNT(DISTINCT "StoreNumber") AS magaza
         FROM gunluk_satis
         WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'
         GROUP BY 1, 2 ORDER BY 1`),
-      pool.query(`
+      guvenli(`
         SELECT g."StoreNumber" AS id, "SupplierItemNumber" AS sku,
                MAX(g."StoreName") AS magaza_adi, m.il, m.bolge,
-               ${tipCoalesce('m.tip', 'g."StoreName"')} AS tip,
+               ${tipCoalesce('m.tip', 'MAX(g."StoreName")')} AS tip,
                ${QTY} AS qty, ${REV} AS rev,
                MAX(g."DateTransaction") AS son_satis
         FROM gunluk_satis g
@@ -465,7 +473,7 @@ app.get('/api/satis-ozet', async (req, res) => {
         GROUP BY g."StoreNumber", "SupplierItemNumber", m.il, m.bolge, m.tip`),
       // Toplamın kaçı bozuk tarihli satırlardan geliyor — iki rapor ayrışırsa
       // farkın buradan gelip gelmediği tek bakışta görülsün diye ayrı veriliyor.
-      pool.query(`
+      guvenli(`
         SELECT COUNT(DISTINCT "StoreNumber") AS magaza_sayisi,
                COUNT(DISTINCT "DateTransaction") FILTER
                  (WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}') AS gun_sayisi,
@@ -480,7 +488,8 @@ app.get('/api/satis-ozet', async (req, res) => {
       urunler: urun.rows,
       gunluk:  gun.rows,
       magazalar: magaza.rows,
-      genel: genel.rows[0],
+      genel: genel.rows[0] || {},
+      hatalar,
     });
   } catch(e) {
     console.error('satis-ozet hata:', e.message);

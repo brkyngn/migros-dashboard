@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { fetchDailySales, fetchStockReport, fetchSatisOzet } from '../api/migros';
 import type { SatisOzet } from '../api/migros';
 import type { DailySale, StockRecord, Page } from '../types';
-import { productsFromOzet, groupByWeek, calcStockStatus, SKU_AC, SKU_MB } from '../utils/calculations';
+import { productsFromOzet, groupByProduct, groupByWeek, calcStockStatus, SKU_AC, SKU_MB } from '../utils/calculations';
 import { formatTL, formatNum, formatPct } from '../utils/formatters';
 import KPICard from '../components/common/KPICard';
 import LoadingSkeleton from '../components/common/LoadingSkeleton';
@@ -16,8 +16,14 @@ export default function Dashboard({ onNavigate }: Props) {
   const [ozet, setOzet]   = useState<SatisOzet | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Her istek kendi hatasını yutar: biri düşerse sayfanın tamamı boşalmasın.
+  // (Promise.all tek reddedilmede diğer sonuçları da çöpe atıyordu.)
   useEffect(() => {
-    Promise.all([fetchDailySales(), fetchStockReport(), fetchSatisOzet()])
+    Promise.all([
+      fetchDailySales().catch(() => [] as DailySale[]),
+      fetchStockReport().catch(() => [] as StockRecord[]),
+      fetchSatisOzet().catch(() => null),
+    ])
       .then(([s, st, oz]) => { setSales(s); setStock(st); setOzet(oz); })
       .finally(() => setLoading(false));
   }, []);
@@ -26,13 +32,20 @@ export default function Dashboard({ onNavigate }: Props) {
 
   // Kümülatif rakamlar sunucudan; istemcideki `sales` LIMIT 20000 ile kırpık
   // geldiği için burada toplanırsa ciro eksik çıkar (e-postayla uyuşmaz).
+  // Özet ucu düşerse eski (kırpık ama sıfır olmayan) hesaba geri dönülür.
   const izlenen = new Set([SKU_AC, SKU_MB]);
   const ozetUrun = (ozet?.urunler ?? []).filter(u => izlenen.has(u.sku));
-  const products = productsFromOzet(ozetUrun);
-  const totalRevenue = ozetUrun.reduce((s, u) => s + Number(u.rev || 0), 0);
-  const totalQty     = ozetUrun.reduce((s, u) => s + Number(u.qty || 0), 0);
-  const allStores    = Number(ozet?.genel?.magaza_sayisi || 0);
-  const days         = Number(ozet?.genel?.gun_sayisi || 0);
+  const ozetVar = ozetUrun.length > 0;
+
+  const products = ozetVar ? productsFromOzet(ozetUrun) : groupByProduct(sales);
+  const totalRevenue = products.reduce((s, p) => s + p.revenue, 0);
+  const totalQty     = products.reduce((s, p) => s + p.quantity, 0);
+  const allStores = ozetVar
+    ? Number(ozet?.genel?.magaza_sayisi || 0)
+    : new Set(sales.map(s => s.StoreNumber)).size;
+  const days = ozetVar
+    ? Number(ozet?.genel?.gun_sayisi || 0)
+    : new Set(sales.map(s => s.DateTransaction.slice(0, 10))).size;
   const avgDailyRevenue = days > 0 ? totalRevenue / days : 0;
 
   const stockStatus = { zero: 0, critical: 0, warning: 0, healthy: 0 };
@@ -55,6 +68,13 @@ export default function Dashboard({ onNavigate }: Props) {
         <KPICard label="Aktif Mağaza" value={formatNum(allStores)} color="#f5a623" />
         <KPICard label="Ort. Günlük Ciro" value={formatTL(avgDailyRevenue)} color="#1A3A5C" />
       </div>
+
+      {!ozetVar && !empty && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-800 text-xs">
+          ⚠️ Sunucu satış özeti alınamadı; toplamlar en yeni 20.000 satırdan hesaplandı
+          ve <b>eksik olabilir</b>. Doğru kümülatif için günlük e-posta raporuna bakın.
+        </div>
+      )}
 
       {empty && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-amber-800 text-sm">
