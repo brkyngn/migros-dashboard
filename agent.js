@@ -144,26 +144,43 @@ async function ensureColumns(tableName, keys) {
   }
 }
 
-// DB'ye kaydet
-const CONFLICT_CLAUSES = {
-  gunluk_satis: 'ON CONFLICT ("DateTransaction","StoreNumber","SupplierItemNumber","BarcodeNumber") DO NOTHING',
+// Mükerrer koruması index'e GÜVENMEZ. Postgres unique index'inde NULL'lar
+// birbirinden farklı sayılır; BarcodeNumber NULL olan satırlarda
+// ON CONFLICT DO NOTHING hiç eşleşmiyor ve her çekimde satır yeniden
+// yazılıyordu (3 Eylül'ün iki katına çıkması bu yüzden). IS NOT DISTINCT FROM
+// NULL'ı NULL'a eşit sayar ve hiçbir index'e bağımlı değildir.
+const DEDUP_KEYS = {
+  gunluk_satis: ['DateTransaction', 'StoreNumber', 'SupplierItemNumber', 'BarcodeNumber'],
 };
 
 async function saveToDatabase(tableName, data) {
   if (!data || !data.length) return 0;
   const keys = Object.keys(data[0]);
   await ensureColumns(tableName, keys);
-  let count = 0;
   const cols = keys.map(k => '"' + k + '"').join(',');
-  const placeholders = keys.map((_, i) => '$' + (i+1)).join(',');
-  const conflict = CONFLICT_CLAUSES[tableName] || '';
-  for (const row of data) {
-    const values = keys.map(k => row[k] !== undefined ? row[k] : null);
-    try {
-      const r = await pool.query(`INSERT INTO ${tableName} (${cols}) VALUES (${placeholders}) ${conflict}`, values);
-      count += r.rowCount;
-    } catch(e) { /* skip */ }
+
+  const dedup = DEDUP_KEYS[tableName];
+  let sql;
+  if (dedup && dedup.every(k => keys.includes(k))) {
+    const kosul = dedup.map(k => `"${k}" IS NOT DISTINCT FROM $${keys.indexOf(k) + 1}`).join(' AND ');
+    const secim = keys.map((_, i) => `$${i + 1}::text`).join(',');
+    sql = `INSERT INTO ${tableName} (${cols})
+           SELECT ${secim}
+           WHERE NOT EXISTS (SELECT 1 FROM ${tableName} WHERE ${kosul})`;
+  } else {
+    sql = `INSERT INTO ${tableName} (${cols}) VALUES (${keys.map((_, i) => '$' + (i + 1)).join(',')})`;
   }
+
+  let count = 0, hata = 0, ilkHata = null;
+  for (const row of data) {
+    const values = keys.map(k => (row[k] !== undefined ? row[k] : null));
+    try {
+      const r = await pool.query(sql, values);
+      count += r.rowCount;
+    } catch (e) { hata++; if (!ilkHata) ilkHata = e.message; }
+  }
+  // Sessizce yutmak, mükerrer sorununun aylarca fark edilmemesine yol açtı
+  if (hata) console.error(`⚠️ ${tableName}: ${hata} satır yazılamadı — ${ilkHata}`);
   return count;
 }
 

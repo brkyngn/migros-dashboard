@@ -82,7 +82,11 @@ async function initializeDatabase() {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS gunluk_satis_unique_idx
     ON gunluk_satis ("DateTransaction","StoreNumber","SupplierItemNumber","BarcodeNumber")
-  `).catch(() => {});
+  `).catch(e => {
+    // Sessizce yutmak, mükerrer korumasının hiç kurulmadığının anlaşılmasını
+    // engelledi. Index zaten mükerrer varsa oluşmaz; log'da görünsün.
+    console.error('⚠️ gunluk_satis unique index oluşturulamadı:', e.message);
+  });
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS stok (
@@ -145,23 +149,43 @@ async function ensureColumns(tableName, keys) {
   }
 }
 
-// DB'ye kaydet
+// Mükerrer koruması index'e GÜVENMEZ. Postgres unique index'inde NULL'lar
+// birbirinden farklı sayılır; BarcodeNumber NULL olan satırlarda
+// ON CONFLICT DO NOTHING hiç eşleşmiyor ve her çekimde satır yeniden
+// yazılıyordu (3 Eylül'ün iki katına çıkması bu yüzden). IS NOT DISTINCT FROM
+// NULL'ı NULL'a eşit sayar ve hiçbir index'e bağımlı değildir.
+const DEDUP_KEYS = {
+  gunluk_satis: ['DateTransaction', 'StoreNumber', 'SupplierItemNumber', 'BarcodeNumber'],
+};
+
 async function saveToDatabase(tableName, data) {
   if (!data || !data.length) return 0;
   const keys = Object.keys(data[0]);
   await ensureColumns(tableName, keys);
-  let count = 0;
   const cols = keys.map(k => '"' + k + '"').join(',');
-  const placeholders = keys.map((_, i) => '$' + (i+1)).join(',');
-  for (const row of data) {
-    const values = keys.map(k => row[k] !== undefined ? row[k] : null);
-    try {
-      const r = await pool.query(
-        `INSERT INTO ${tableName} (${cols}) VALUES (${placeholders})`, values
-      );
-      count += r.rowCount;
-    } catch(e) { /* skip */ }
+
+  const dedup = DEDUP_KEYS[tableName];
+  let sql;
+  if (dedup && dedup.every(k => keys.includes(k))) {
+    const kosul = dedup.map(k => `"${k}" IS NOT DISTINCT FROM $${keys.indexOf(k) + 1}`).join(' AND ');
+    const secim = keys.map((_, i) => `$${i + 1}::text`).join(',');
+    sql = `INSERT INTO ${tableName} (${cols})
+           SELECT ${secim}
+           WHERE NOT EXISTS (SELECT 1 FROM ${tableName} WHERE ${kosul})`;
+  } else {
+    sql = `INSERT INTO ${tableName} (${cols}) VALUES (${keys.map((_, i) => '$' + (i + 1)).join(',')})`;
   }
+
+  let count = 0, hata = 0, ilkHata = null;
+  for (const row of data) {
+    const values = keys.map(k => (row[k] !== undefined ? row[k] : null));
+    try {
+      const r = await pool.query(sql, values);
+      count += r.rowCount;
+    } catch (e) { hata++; if (!ilkHata) ilkHata = e.message; }
+  }
+  // Sessizce yutmak, mükerrer sorununun aylarca fark edilmemesine yol açtı
+  if (hata) console.error(`⚠️ ${tableName}: ${hata} satır yazılamadı — ${ilkHata}`);
   return count;
 }
 
@@ -426,6 +450,99 @@ app.get('/api/magaza-tipi', async (req, res) => {
       stok: stok.rows,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── MÜKERRER SATIŞ TEŞHİSİ ───────────────────────────────────────────────────
+// gunluk_satis'te mükerrer engelleyici unique index var ama Postgres'te NULL'lar
+// birbirinden farklı sayılır: dört anahtar kolondan biri (özellikle
+// BarcodeNumber) NULL ise ON CONFLICT DO NOTHING hiç eşleşmez ve aynı satır
+// her yeniden çekimde tekrar yazılır. Bu uç, önce ne olduğunu gösterir.
+app.get('/api/satis-mukerrer', async (req, res) => {
+  try {
+    const tarih = req.query.tarih || null;
+    const p = tarih ? [tarih] : [];
+    const nerede = tarih ? `WHERE "DateTransaction" = $1` : '';
+
+    const [ozet, gunler, indeks] = await Promise.all([
+      pool.query(`
+        WITH gruplar AS (
+          SELECT "DateTransaction" AS tarih, "StoreNumber" AS magaza,
+                 "SupplierItemNumber" AS sku, "BarcodeNumber" AS barkod,
+                 COUNT(*) AS adet,
+                 SUM(CASE WHEN "QuantitySold" ~ '^-?[0-9.]+$'
+                          THEN CAST("QuantitySold" AS FLOAT) ELSE 0 END) AS qty,
+                 SUM(CASE WHEN "NetSalesValue" ~ '^-?[0-9.]+$'
+                          THEN CAST("NetSalesValue" AS FLOAT) ELSE 0 END) AS rev
+          FROM gunluk_satis ${nerede}
+          GROUP BY 1,2,3,4 HAVING COUNT(*) > 1
+        )
+        SELECT COUNT(*) AS mukerrer_grup,
+               COALESCE(SUM(adet - 1), 0) AS fazla_satir,
+               -- fazlalık payı: her gruptaki fazla kopyaların taşıdığı miktar
+               COALESCE(SUM(qty * (adet - 1) / adet), 0) AS fazla_qty,
+               COALESCE(SUM(rev * (adet - 1) / adet), 0) AS fazla_rev,
+               COUNT(*) FILTER (WHERE barkod IS NULL) AS barkod_null_grup
+        FROM gruplar`, p),
+      // Hangi günler etkilenmiş + o günün toplamı ne kadar şişmiş
+      pool.query(`
+        WITH gruplar AS (
+          SELECT "DateTransaction" AS tarih, "StoreNumber" AS magaza,
+                 "SupplierItemNumber" AS sku, "BarcodeNumber" AS barkod,
+                 COUNT(*) AS adet,
+                 SUM(CASE WHEN "QuantitySold" ~ '^-?[0-9.]+$'
+                          THEN CAST("QuantitySold" AS FLOAT) ELSE 0 END) AS qty
+          FROM gunluk_satis
+          GROUP BY 1,2,3,4 HAVING COUNT(*) > 1
+        )
+        SELECT tarih, COUNT(*) AS grup, SUM(adet - 1) AS fazla_satir,
+               ROUND(SUM(qty * (adet - 1) / adet)::numeric, 2) AS fazla_qty
+        FROM gruplar GROUP BY tarih ORDER BY tarih DESC LIMIT 30`),
+      // Unique index gerçekten var mı? (oluşturma hatası sessizce yutuluyordu)
+      pool.query(`
+        SELECT indexname, indexdef FROM pg_indexes
+        WHERE tablename = 'gunluk_satis'`),
+    ]);
+
+    res.json({
+      tarih: tarih || 'tüm zamanlar',
+      ozet: ozet.rows[0],
+      etkilenenGunler: gunler.rows,
+      indeksler: indeks.rows,
+    });
+  } catch(e) {
+    console.error('satis-mukerrer hata:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Mükerrer satırları siler; her gruptan EN DÜŞÜK id kalır.
+// Geri alınamaz — bu yüzden gövdede {onay:"SIL"} ve tarih zorunlu.
+app.post('/api/satis-mukerrer-temizle', async (req, res) => {
+  const { onay, tarih } = req.body || {};
+  if (onay !== 'SIL') {
+    return res.status(400).json({ error: 'Onay gerekli: gövdede {"onay":"SIL","tarih":"YYYY-MM-DD"} gönderin.' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tarih || '')) {
+    return res.status(400).json({ error: 'Geçerli bir tarih gerekli (YYYY-MM-DD). Tüm tabloyu tek seferde temizlemiyoruz.' });
+  }
+  try {
+    const r = await pool.query(`
+      DELETE FROM gunluk_satis WHERE id IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY "DateTransaction", "StoreNumber",
+                         "SupplierItemNumber", "BarcodeNumber"
+            ORDER BY id
+          ) AS sira
+          FROM gunluk_satis WHERE "DateTransaction" = $1
+        ) t WHERE sira > 1
+      )`, [tarih]);
+    console.log(`🧹 Mükerrer temizlik ${tarih}: ${r.rowCount} satır silindi`);
+    res.json({ tarih, silinen: r.rowCount });
+  } catch(e) {
+    console.error('mukerrer-temizle hata:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── SATIŞ ÖZETİ (sunucu tarafı toplamlar) ────────────────────────────────────
@@ -850,11 +967,20 @@ app.post('/api/import-excel-satis', async (req, res) => {
             : (typeof v === 'object') ? String(v) : v;
         }
         const cols = Object.keys(safeRow).map(k => '"' + k + '"').join(',');
-        const vals = Object.keys(safeRow).map((_, i) => '$' + (i + 1)).join(',');
         const values = Object.values(safeRow);
+        // ON CONFLICT yerine NULL-güvenli kontrol — bkz. saveToDatabase notu
+        const anahtar = DEDUP_KEYS.gunluk_satis;
+        const alanlar = Object.keys(safeRow);
+        const kosul = anahtar
+          .map(k => alanlar.includes(k)
+            ? `"${k}" IS NOT DISTINCT FROM $${alanlar.indexOf(k) + 1}`
+            : `"${k}" IS NULL`)
+          .join(' AND ');
+        const secim = alanlar.map((_, i) => `$${i + 1}::text`).join(',');
         const r = await pool.query(
-          `INSERT INTO gunluk_satis (${cols}) VALUES (${vals})
-           ON CONFLICT ("DateTransaction","StoreNumber","SupplierItemNumber","BarcodeNumber") DO NOTHING`, values
+          `INSERT INTO gunluk_satis (${cols})
+           SELECT ${secim}
+           WHERE NOT EXISTS (SELECT 1 FROM gunluk_satis WHERE ${kosul})`, values
         );
         inserted += r.rowCount;
       } catch(e) { skipped++; }
