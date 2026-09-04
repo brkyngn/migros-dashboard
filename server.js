@@ -156,6 +156,9 @@ async function ensureColumns(tableName, keys) {
 // NULL'ı NULL'a eşit sayar ve hiçbir index'e bağımlı değildir.
 const DEDUP_KEYS = {
   gunluk_satis: ['DateTransaction', 'StoreNumber', 'SupplierItemNumber', 'BarcodeNumber'],
+  // stok tablosunda unique index YOK; koruma tamamen buradaki kontrole bağlı.
+  // Bir snapshot'ta aynı teslim noktası + SKU tek satırdır.
+  stok: ['veri_tarihi', 'TESLIM_NOKTASI_ID', 'SATICI_URUN_KODU'],
 };
 
 async function saveToDatabase(tableName, data) {
@@ -638,6 +641,82 @@ app.post('/api/satis-mukerrer-temizle', async (req, res) => {
     res.json({ tarih, anahtar: anahtar || 'tam', silinen: r.rowCount });
   } catch(e) {
     console.error('mukerrer-temizle hata:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── MÜKERRER STOK TEŞHİSİ ────────────────────────────────────────────────────
+// stok tablosunda unique index YOK ve yakın zamana kadar hiçbir mükerrer
+// koruması da yoktu; aynı gün için tekrarlanan her çekim tüm satırları
+// yeniden yazabiliyordu. Ayrıca /api/agent-calistir satırları veri_tarihi
+// damgalamadan yazıyordu — o satırlar NULL tarihle hiçbir rapora girmiyor.
+app.get('/api/stok-mukerrer', async (req, res) => {
+  try {
+    const [gruplar, gunler, damgasiz] = await Promise.all([
+      pool.query(`
+        WITH g AS (
+          SELECT veri_tarihi, "TESLIM_NOKTASI_ID" AS nokta,
+                 "SATICI_URUN_KODU" AS sku, COUNT(*) AS adet,
+                 SUM(CASE WHEN "STOK_MIKTARI" ~ '^-?[0-9.]+$'
+                          THEN CAST("STOK_MIKTARI" AS FLOAT) ELSE 0 END) AS miktar
+          FROM stok WHERE veri_tarihi IS NOT NULL
+          GROUP BY 1,2,3 HAVING COUNT(*) > 1
+        )
+        SELECT COUNT(*) AS mukerrer_grup,
+               COALESCE(SUM(adet - 1), 0) AS fazla_satir,
+               COALESCE(SUM(miktar * (adet - 1) / adet), 0) AS fazla_miktar
+        FROM g`),
+      // Günlük satır sayısı: bir gün diğerlerinin katıysa o gün çift işlenmiş
+      pool.query(`
+        SELECT veri_tarihi, COUNT(*) AS satir,
+               COUNT(DISTINCT "TESLIM_NOKTASI_ID") AS nokta,
+               ROUND(SUM(CASE WHEN "STOK_MIKTARI" ~ '^-?[0-9.]+$'
+                        THEN CAST("STOK_MIKTARI" AS FLOAT) ELSE 0 END)::numeric, 0) AS miktar
+        FROM stok WHERE veri_tarihi IS NOT NULL
+        GROUP BY 1 ORDER BY 1 DESC LIMIT 30`),
+      pool.query(`SELECT COUNT(*) AS damgasiz_satir FROM stok WHERE veri_tarihi IS NULL`),
+    ]);
+    res.json({
+      ozet: { ...gruplar.rows[0], ...damgasiz.rows[0] },
+      gunler: gunler.rows,
+    });
+  } catch(e) {
+    console.error('stok-mukerrer hata:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Mükerrer stok satırlarını siler; her gruptan en düşük id kalır.
+app.post('/api/stok-mukerrer-temizle', async (req, res) => {
+  const { onay, tarih } = req.body || {};
+  if (onay !== 'SIL' && onay !== 'DENEME') {
+    return res.status(400).json({ error: 'onay "DENEME" veya "SIL" olmalı.' });
+  }
+  const p = [];
+  let nerede = 'veri_tarihi IS NOT NULL';
+  if (tarih) { p.push(tarih); nerede += ` AND veri_tarihi = $${p.length}`; }
+  const fazlalar = `
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY veri_tarihi, "TESLIM_NOKTASI_ID", "SATICI_URUN_KODU"
+          ORDER BY id
+        ) AS sira
+        FROM stok WHERE ${nerede}
+      ) t WHERE sira > 1`;
+  try {
+    if (onay === 'DENEME') {
+      const d = await pool.query(`
+        SELECT COUNT(*) AS silinecek,
+               SUM(CASE WHEN "STOK_MIKTARI" ~ '^-?[0-9.]+$'
+                        THEN CAST("STOK_MIKTARI" AS FLOAT) ELSE 0 END) AS dusecek_miktar
+        FROM stok WHERE id IN (${fazlalar})`, p);
+      return res.json({ deneme: true, tarih: tarih || 'tüm tarihler', ...d.rows[0] });
+    }
+    const r = await pool.query(`DELETE FROM stok WHERE id IN (${fazlalar})`, p);
+    console.log(`🧹 Stok mükerrer temizlik (${tarih || 'tüm tarihler'}): ${r.rowCount} satır silindi`);
+    res.json({ tarih: tarih || 'tüm tarihler', silinen: r.rowCount });
+  } catch(e) {
+    console.error('stok-mukerrer-temizle hata:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -1336,7 +1415,12 @@ app.post('/api/agent-calistir', async (req, res) => {
   (async () => {
     const sr = await agentFetch(`/report/get-stok/?pageno=1&saticiid=${CONFIG.SATICI_ID}&iade=H`, 'Stok');
     let sc = 0;
-    if (sr && sr.data) sc = await saveToDatabase('stok', sr.data);
+    if (sr && sr.data) {
+      // veri_tarihi damgası ŞART: damgasız satırlar NULL kalıyor ve tüm
+      // raporlar veri_tarihi'ne göre filtrelediği için hiçbir yerde görünmüyor.
+      const veriTarihi = trYesterday();
+      sc = await saveToDatabase('stok', sr.data.map(row => ({ ...row, veri_tarihi: veriTarihi })));
+    }
 
     const yesterday = trYesterday();
     const gr = await agentFetch(`/report/get-gunluk-satis?pageno=1&raporBaslangic=${yesterday}&raporBitis=${yesterday}&saticiIds=${CONFIG.SATICI_ID}`, 'Günlük Satış');

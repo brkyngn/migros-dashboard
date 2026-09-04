@@ -151,6 +151,9 @@ async function ensureColumns(tableName, keys) {
 // NULL'ı NULL'a eşit sayar ve hiçbir index'e bağımlı değildir.
 const DEDUP_KEYS = {
   gunluk_satis: ['DateTransaction', 'StoreNumber', 'SupplierItemNumber', 'BarcodeNumber'],
+  // stok tablosunda unique index YOK; koruma tamamen buradaki kontrole bağlı.
+  // Bir snapshot'ta aynı teslim noktası + SKU tek satırdır.
+  stok: ['veri_tarihi', 'TESLIM_NOKTASI_ID', 'SATICI_URUN_KODU'],
 };
 
 async function saveToDatabase(tableName, data) {
