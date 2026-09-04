@@ -164,6 +164,11 @@ async function saveToDatabase(tableName, data) {
   await ensureColumns(tableName, keys);
   const cols = keys.map(k => '"' + k + '"').join(',');
 
+  // Tarih normalizasyonu BURADA yapılır. Çağrı yerlerine bırakıldığında
+  // /api/agent-gunluk ve /api/agent-calistir bunu atlıyordu; aynı gün hem
+  // "09/03/2026 00:00:00" hem "2026-09-03" olarak yazılıp iki kez sayıldı.
+  const tarihKolonu = tableName === 'gunluk_satis' ? 'DateTransaction' : null;
+
   const dedup = DEDUP_KEYS[tableName];
   let sql;
   if (dedup && dedup.every(k => keys.includes(k))) {
@@ -178,7 +183,10 @@ async function saveToDatabase(tableName, data) {
 
   let count = 0, hata = 0, ilkHata = null;
   for (const row of data) {
-    const values = keys.map(k => (row[k] !== undefined ? row[k] : null));
+    const values = keys.map(k => {
+      const v = row[k] !== undefined ? row[k] : null;
+      return (tarihKolonu && k === tarihKolonu && v) ? normalizeDateStr(v) : v;
+    });
     try {
       const r = await pool.query(sql, values);
       count += r.rowCount;
@@ -630,6 +638,74 @@ app.post('/api/satis-mukerrer-temizle', async (req, res) => {
     res.json({ tarih, anahtar: anahtar || 'tam', silinen: r.rowCount });
   } catch(e) {
     console.error('mukerrer-temizle hata:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── BOZUK TARİH ONARIMI ──────────────────────────────────────────────────────
+// Aynı satış hem "09/03/2026 00:00:00" hem "2026-09-03" olarak yazıldığında
+// DateTransaction farklı olduğu için unique index çakışma görmez ve gün iki
+// kez sayılır. Onarım SIRASI önemli: önce ISO ikizi zaten var olan bozuk
+// satırlar SİLİNİR, sonra ikizi olmayanlar ISO'ya ÇEVRİLİR. Ters sırada
+// yapılırsa UPDATE unique index'e takılır ve satırlar bozuk kalır.
+app.post('/api/satis-tarih-onar', async (req, res) => {
+  const { onay } = req.body || {};
+  if (onay !== 'UYGULA' && onay !== 'DENEME') {
+    return res.status(400).json({
+      error: 'onay "DENEME" (hiçbir şey değiştirmez) veya "UYGULA" olmalı.',
+    });
+  }
+  // MM/DD/YYYY... → YYYY-MM-DD (normalizeDateStr'ın SQL karşılığı).
+  // Alias parametreli: alt sorgu içinde niteliksiz "DateTransaction" iç tabloya
+  // bağlanır, dış satıra değil — ikiz kontrolü sessizce yanlış çalışırdı.
+  const ISO = (a) => `substring(${a}."DateTransaction" from 7 for 4) || '-' ||
+               substring(${a}."DateTransaction" from 1 for 2) || '-' ||
+               substring(${a}."DateTransaction" from 4 for 2)`;
+  const BOZUK = (a) => `${a}."DateTransaction" ~ '^\\d{2}/\\d{2}/\\d{4}'`;
+  const IKIZ = `EXISTS (
+      SELECT 1 FROM gunluk_satis i
+      WHERE i."DateTransaction" = ${ISO('b')}
+        AND i."StoreNumber"         IS NOT DISTINCT FROM b."StoreNumber"
+        AND i."SupplierItemNumber"  IS NOT DISTINCT FROM b."SupplierItemNumber"
+        AND i."BarcodeNumber"       IS NOT DISTINCT FROM b."BarcodeNumber"
+    )`;
+  // İki bozuk satır aynı güne normalize olabilir (saat kısmı farklı olduğunda).
+  // Bunlar UPDATE'te unique index'e çarpardı; en düşük id kalacak şekilde ayıklanır.
+  const KENDI_ARASINDA_FAZLA = `
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY ${ISO('b')}, b."StoreNumber",
+                       b."SupplierItemNumber", b."BarcodeNumber"
+          ORDER BY id
+        ) AS sira
+        FROM gunluk_satis b WHERE ${BOZUK('b')}
+      ) t WHERE sira > 1`;
+  try {
+    if (onay === 'DENEME') {
+      const r = await pool.query(`
+        SELECT COUNT(*) AS bozuk_satir,
+               COUNT(*) FILTER (WHERE ${IKIZ})     AS ikizi_var_silinecek,
+               COUNT(*) FILTER (WHERE NOT ${IKIZ}) AS cevrilecek,
+               SUM(CASE WHEN ${IKIZ} AND b."QuantitySold" ~ '^-?[0-9.]+$'
+                        THEN CAST(b."QuantitySold" AS FLOAT) ELSE 0 END) AS dusecek_qty
+        FROM gunluk_satis b WHERE ${BOZUK('b')}`);
+      const kendi = await pool.query(
+        `SELECT COUNT(*) AS kendi_arasinda_fazla FROM (${KENDI_ARASINDA_FAZLA}) x`);
+      return res.json({ deneme: true, ...r.rows[0], ...kendi.rows[0] });
+    }
+
+    // Sıra kritik: önce silmeler, sonra çevirme. Ters sırada UPDATE unique
+    // index'e takılır ve satırlar bozuk kalır.
+    const sil1 = await pool.query(
+      `DELETE FROM gunluk_satis b WHERE ${BOZUK('b')} AND ${IKIZ}`);
+    const sil2 = await pool.query(
+      `DELETE FROM gunluk_satis WHERE id IN (${KENDI_ARASINDA_FAZLA})`);
+    const cevir = await pool.query(
+      `UPDATE gunluk_satis b SET "DateTransaction" = ${ISO('b')} WHERE ${BOZUK('b')}`);
+    console.log(`🗓️ Tarih onarımı: ${sil1.rowCount} ikiz + ${sil2.rowCount} kendi arasında mükerrer silindi, ${cevir.rowCount} satır ISO'ya çevrildi`);
+    res.json({ ikizSilinen: sil1.rowCount, kendiArasindaSilinen: sil2.rowCount, cevrilen: cevir.rowCount });
+  } catch(e) {
+    console.error('satis-tarih-onar hata:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

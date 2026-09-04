@@ -159,6 +159,11 @@ async function saveToDatabase(tableName, data) {
   await ensureColumns(tableName, keys);
   const cols = keys.map(k => '"' + k + '"').join(',');
 
+  // Tarih normalizasyonu BURADA yapılır. Çağrı yerlerine bırakıldığında
+  // /api/agent-gunluk ve /api/agent-calistir bunu atlıyordu; aynı gün hem
+  // "09/03/2026 00:00:00" hem "2026-09-03" olarak yazılıp iki kez sayıldı.
+  const tarihKolonu = tableName === 'gunluk_satis' ? 'DateTransaction' : null;
+
   const dedup = DEDUP_KEYS[tableName];
   let sql;
   if (dedup && dedup.every(k => keys.includes(k))) {
@@ -173,7 +178,10 @@ async function saveToDatabase(tableName, data) {
 
   let count = 0, hata = 0, ilkHata = null;
   for (const row of data) {
-    const values = keys.map(k => (row[k] !== undefined ? row[k] : null));
+    const values = keys.map(k => {
+      const v = row[k] !== undefined ? row[k] : null;
+      return (tarihKolonu && k === tarihKolonu && v) ? normalizeDateStr(v) : v;
+    });
     try {
       const r = await pool.query(sql, values);
       count += r.rowCount;
