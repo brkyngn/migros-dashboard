@@ -652,7 +652,7 @@ app.post('/api/satis-mukerrer-temizle', async (req, res) => {
 // damgalamadan yazıyordu — o satırlar NULL tarihle hiçbir rapora girmiyor.
 app.get('/api/stok-mukerrer', async (req, res) => {
   try {
-    const [gruplar, gunler, damgasiz] = await Promise.all([
+    const [gruplar, gunler, damgasiz, mukGun] = await Promise.all([
       pool.query(`
         WITH g AS (
           SELECT veri_tarihi, "TESLIM_NOKTASI_ID" AS nokta,
@@ -675,9 +675,22 @@ app.get('/api/stok-mukerrer', async (req, res) => {
         FROM stok WHERE veri_tarihi IS NOT NULL
         GROUP BY 1 ORDER BY 1 DESC LIMIT 30`),
       pool.query(`SELECT COUNT(*) AS damgasiz_satir FROM stok WHERE veri_tarihi IS NULL`),
+      // Yalnızca mükerrer İÇEREN günler — tüm geçmiş, 30 günle sınırlı değil.
+      // kat = satır / benzersiz satır; 2.0 ise o gün iki kez yazılmış demektir.
+      pool.query(`
+        SELECT veri_tarihi,
+               COUNT(*) AS satir,
+               COUNT(DISTINCT ("TESLIM_NOKTASI_ID", "SATICI_URUN_KODU")) AS benzersiz,
+               ROUND((COUNT(*)::numeric /
+                      NULLIF(COUNT(DISTINCT ("TESLIM_NOKTASI_ID", "SATICI_URUN_KODU")), 0)), 2) AS kat
+        FROM stok WHERE veri_tarihi IS NOT NULL
+        GROUP BY 1
+        HAVING COUNT(*) > COUNT(DISTINCT ("TESLIM_NOKTASI_ID", "SATICI_URUN_KODU"))
+        ORDER BY 1`),
     ]);
     res.json({
       ozet: { ...gruplar.rows[0], ...damgasiz.rows[0] },
+      mukerrerGunler: mukGun.rows,
       gunler: gunler.rows,
     });
   } catch(e) {
