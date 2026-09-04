@@ -503,9 +503,55 @@ app.get('/api/satis-mukerrer', async (req, res) => {
         WHERE tablename = 'gunluk_satis'`),
     ]);
 
+    // Tarih verildiyse o günün detayı: anahtar mükerrer yoksa şişme başka
+    // yerden geliyordur — aynı mağaza+SKU'nun farklı barkodlarla tekrarlaması
+    // ya da aynı günün farklı tarih formatlarında iki kez durması gibi.
+    let detay = null;
+    if (tarih) {
+      const [y, m, d] = tarih.split('-');
+      const varyant = [tarih, `${m}/${d}/${y}%`, `${tarih}%`, `${d}.${m}.${y}%`];
+      const [gun, ayniMagazaSku, tarihVaryant] = await Promise.all([
+        pool.query(`
+          SELECT "SupplierItemNumber" AS sku, COUNT(*) AS satir,
+                 COUNT(DISTINCT "StoreNumber") AS magaza,
+                 SUM(CASE WHEN "QuantitySold" ~ '^-?[0-9.]+$'
+                          THEN CAST("QuantitySold" AS FLOAT) ELSE 0 END) AS qty,
+                 SUM(CASE WHEN "NetSalesValue" ~ '^-?[0-9.]+$'
+                          THEN CAST("NetSalesValue" AS FLOAT) ELSE 0 END) AS rev
+          FROM gunluk_satis WHERE "DateTransaction" = $1
+          GROUP BY 1`, [tarih]),
+        // Aynı mağaza+SKU birden çok satırda: barkodlar farklıysa anahtar
+        // mükerreri yakalamaz ama satış iki kez sayılıyor olabilir.
+        pool.query(`
+          SELECT "StoreNumber" AS magaza, "SupplierItemNumber" AS sku,
+                 COUNT(*) AS satir,
+                 ARRAY_AGG(DISTINCT "BarcodeNumber") AS barkodlar,
+                 SUM(CASE WHEN "QuantitySold" ~ '^-?[0-9.]+$'
+                          THEN CAST("QuantitySold" AS FLOAT) ELSE 0 END) AS qty
+          FROM gunluk_satis WHERE "DateTransaction" = $1
+          GROUP BY 1,2 HAVING COUNT(*) > 1
+          ORDER BY 3 DESC LIMIT 50`, [tarih]),
+        // Aynı gün farklı formatlarda duruyor mu (2026-09-03 vs 09/03/2026)
+        pool.query(`
+          SELECT "DateTransaction" AS tarih_degeri, COUNT(*) AS satir,
+                 SUM(CASE WHEN "QuantitySold" ~ '^-?[0-9.]+$'
+                          THEN CAST("QuantitySold" AS FLOAT) ELSE 0 END) AS qty
+          FROM gunluk_satis
+          WHERE "DateTransaction" = $1 OR "DateTransaction" LIKE $2
+             OR "DateTransaction" LIKE $3 OR "DateTransaction" LIKE $4
+          GROUP BY 1 ORDER BY 1`, varyant),
+      ]);
+      detay = {
+        skuBazinda: gun.rows,
+        ayniMagazaSkuCoklu: ayniMagazaSku.rows,
+        tarihVaryantlari: tarihVaryant.rows,
+      };
+    }
+
     res.json({
       tarih: tarih || 'tüm zamanlar',
       ozet: ozet.rows[0],
+      detay,
       etkilenenGunler: gunler.rows,
       indeksler: indeks.rows,
     });
