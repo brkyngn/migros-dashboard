@@ -564,27 +564,70 @@ app.get('/api/satis-mukerrer', async (req, res) => {
 // Mükerrer satırları siler; her gruptan EN DÜŞÜK id kalır.
 // Geri alınamaz — bu yüzden gövdede {onay:"SIL"} ve tarih zorunlu.
 app.post('/api/satis-mukerrer-temizle', async (req, res) => {
-  const { onay, tarih } = req.body || {};
-  if (onay !== 'SIL') {
-    return res.status(400).json({ error: 'Onay gerekli: gövdede {"onay":"SIL","tarih":"YYYY-MM-DD"} gönderin.' });
+  const { onay, tarih, anahtar } = req.body || {};
+  // anahtar='tam'        → DateTransaction+StoreNumber+SupplierItemNumber+BarcodeNumber
+  // anahtar='magaza-sku' → BarcodeNumber HARİÇ. Aynı gün/mağaza/SKU birden çok
+  //   satırdaysa satış çift sayılıyor demektir; barkod farklı geldiği için
+  //   dört kolonluk anahtar bunu mükerrer saymaz. Önce /api/satis-mukerrer
+  //   çıktısındaki ayniMagazaSkuCoklu listesine bakıp öyle kullanın.
+  const ANAHTARLAR = {
+    tam: '"DateTransaction", "StoreNumber", "SupplierItemNumber", "BarcodeNumber"',
+    'magaza-sku': '"DateTransaction", "StoreNumber", "SupplierItemNumber"',
+  };
+  const bolum = ANAHTARLAR[anahtar || 'tam'];
+  if (!bolum) {
+    return res.status(400).json({ error: 'anahtar "tam" veya "magaza-sku" olmalı.' });
+  }
+  if (onay !== 'SIL' && onay !== 'DENEME') {
+    return res.status(400).json({
+      error: 'onay "DENEME" (hiçbir şey silmez, sayıyı verir) veya "SIL" olmalı.',
+      ornek: { onay: 'DENEME', tarih: 'YYYY-MM-DD', anahtar: 'magaza-sku' },
+    });
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(tarih || '')) {
     return res.status(400).json({ error: 'Geçerli bir tarih gerekli (YYYY-MM-DD). Tüm tabloyu tek seferde temizlemiyoruz.' });
   }
   try {
+    const fazlalar = `
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY ${bolum}
+            ORDER BY id
+          ) AS sira
+          FROM gunluk_satis WHERE "DateTransaction" = $1
+        ) t WHERE sira > 1`;
+
+    // Deneme modu: hiçbir şey silmez, ne kadar temizleneceğini gösterir
+    if (onay === 'DENEME') {
+      const d = await pool.query(`
+        SELECT COUNT(*) AS silinecek,
+               SUM(CASE WHEN "QuantitySold" ~ '^-?[0-9.]+$'
+                        THEN CAST("QuantitySold" AS FLOAT) ELSE 0 END) AS dusecek_qty,
+               SUM(CASE WHEN "NetSalesValue" ~ '^-?[0-9.]+$'
+                        THEN CAST("NetSalesValue" AS FLOAT) ELSE 0 END) AS dusecek_rev
+        FROM gunluk_satis WHERE id IN (${fazlalar})`, [tarih]);
+      const kalan = await pool.query(`
+        SELECT SUM(CASE WHEN "QuantitySold" ~ '^-?[0-9.]+$'
+                        THEN CAST("QuantitySold" AS FLOAT) ELSE 0 END) AS mevcut_qty
+        FROM gunluk_satis WHERE "DateTransaction" = $1`, [tarih]);
+      return res.json({
+        deneme: true, tarih, anahtar: anahtar || 'tam',
+        ...d.rows[0], mevcut_qty: kalan.rows[0].mevcut_qty,
+      });
+    }
+
     const r = await pool.query(`
       DELETE FROM gunluk_satis WHERE id IN (
         SELECT id FROM (
           SELECT id, ROW_NUMBER() OVER (
-            PARTITION BY "DateTransaction", "StoreNumber",
-                         "SupplierItemNumber", "BarcodeNumber"
+            PARTITION BY ${bolum}
             ORDER BY id
           ) AS sira
           FROM gunluk_satis WHERE "DateTransaction" = $1
         ) t WHERE sira > 1
       )`, [tarih]);
-    console.log(`🧹 Mükerrer temizlik ${tarih}: ${r.rowCount} satır silindi`);
-    res.json({ tarih, silinen: r.rowCount });
+    console.log(`🧹 Mükerrer temizlik ${tarih} (anahtar=${anahtar || 'tam'}): ${r.rowCount} satır silindi`);
+    res.json({ tarih, anahtar: anahtar || 'tam', silinen: r.rowCount });
   } catch(e) {
     console.error('mukerrer-temizle hata:', e.message);
     res.status(500).json({ error: e.message });
