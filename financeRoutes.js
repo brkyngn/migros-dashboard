@@ -136,6 +136,27 @@ async function initializeFinanceTables(pool) {
     )
   `);
 
+  // --- Kampanyalar (1 alana 1 bedava vb.) ---
+  // Kampanya dönemindeki adet artışı gerçek talep değildir; bedava verilen
+  // ürünün bize düşen payı maliyettir. İkisini de ayrı izleyebilmek için
+  // kampanya bir kayıt olarak tutulur.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS kampanyalar (
+      id SERIAL PRIMARY KEY,
+      ad TEXT NOT NULL,
+      tip TEXT NOT NULL DEFAULT 'bogo',        -- bogo = 1 alana 1 bedava
+      baslangic DATE NOT NULL,
+      bitis DATE NOT NULL,                      -- DAHİL (bitis günü de kampanyalı)
+      bedava_maliyet_orani NUMERIC NOT NULL,    -- bedava ürünün bize düşen % payı
+      fiyat_bazi TEXT NOT NULL DEFAULT 'kdv_haric',  -- kdv_haric | kdv_dahil | net_satis
+      raporlama_sekli TEXT NOT NULL DEFAULT 'tespit', -- tespit | cift_adet | sadece_odenen
+      skular TEXT[],                            -- NULL = tüm ürünler
+      notlar TEXT,
+      aktif BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // --- Cari hesaplar (tedarikçi/kişi bazlı) ---
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cari_accounts (
@@ -335,6 +356,104 @@ async function materializeRecurring(pool) {
 
 // ========== ROUTER ==========
 
+
+// ─── Kampanya analizi ────────────────────────────────────────────────────────
+// Bedava verilen adedi ve bunun bize düşen maliyetini hesaplar.
+//
+// Birim fiyat kampanya döneminden DEĞİL, kampanya öncesi referans dönemden
+// alınır: Migros "2 adet, 1 bedeli" şeklinde raporluyorsa kampanya dönemindeki
+// NetSalesValue/QuantitySold zaten yarılanmış olur ve maliyeti yarı hesaplardık.
+//
+// raporlama_sekli:
+//   cift_adet      → bedava adet = dönem adedi / 2   (adet iki katına çıkmış)
+//   sadece_odenen  → bedava adet = dönem adedi       (bedavalar raporda yok)
+//   tespit         → birim fiyat oranına bakıp yukarıdakilerden birine karar verir
+async function kampanyaAnaliz(pool, kampanya, referansGun = 14) {
+  const skuKosul = kampanya.skular && kampanya.skular.length
+    ? `AND "SupplierItemNumber" = ANY($3)` : '';
+  const p = (a, b) => kampanya.skular && kampanya.skular.length ? [a, b, kampanya.skular] : [a, b];
+
+  const AGG = `
+    SELECT "SupplierItemNumber" AS sku,
+           SUM(CASE WHEN "QuantitySold"  ~ '^-?[0-9.]+$' THEN CAST("QuantitySold"  AS FLOAT) ELSE 0 END) AS adet,
+           SUM(CASE WHEN "NetSalesValue" ~ '^-?[0-9.]+$' THEN CAST("NetSalesValue" AS FLOAT) ELSE 0 END) AS tutar,
+           COUNT(DISTINCT "DateTransaction") AS gun
+    FROM gunluk_satis
+    WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'
+      AND "DateTransaction" >= $1 AND "DateTransaction" <= $2 ${skuKosul}
+    GROUP BY 1`;
+
+  // Referans dönem: kampanya başlangıcından önceki referansGun gün
+  const refBitisRes = await pool.query(`SELECT ($1::date - 1)::text AS b, ($1::date - $2::int)::text AS a`,
+    [kampanya.baslangic, referansGun]);
+  const { a: refBas, b: refBitis } = refBitisRes.rows[0];
+
+  const [ref, don] = await Promise.all([
+    pool.query(AGG, p(refBas, refBitis)),
+    pool.query(AGG, p(kampanya.baslangic, kampanya.bitis)),
+  ]);
+
+  const refMap = Object.fromEntries(ref.rows.map(r => [r.sku, r]));
+  const oran = Number(kampanya.bedava_maliyet_orani) / 100;
+
+  const satirlar = don.rows.map(d => {
+    const r = refMap[d.sku];
+    const refAdet = Number(r?.adet || 0), refTutar = Number(r?.tutar || 0);
+    const donAdet = Number(d.adet || 0),  donTutar = Number(d.tutar || 0);
+
+    // KDV hariç raf fiyatı — referans dönemden
+    const refBirim = refAdet > 0 ? refTutar / refAdet : null;
+    const donBirim = donAdet > 0 ? donTutar / donAdet : null;
+    const fiyatOrani = (refBirim && donBirim) ? donBirim / refBirim : null;
+
+    // Şekil tespiti: birim fiyat yarılanmışsa bedavalar da raporda demektir
+    let sekil = kampanya.raporlama_sekli;
+    if (sekil === 'tespit') {
+      if (fiyatOrani === null) sekil = 'belirsiz';
+      else if (fiyatOrani < 0.7) sekil = 'cift_adet';
+      else if (fiyatOrani > 0.85) sekil = 'sadece_odenen';
+      else sekil = 'belirsiz';
+    }
+
+    const bedavaAdet = sekil === 'cift_adet'     ? donAdet / 2
+                     : sekil === 'sadece_odenen' ? donAdet
+                     : null;
+
+    const birimFiyat = refBirim;
+    const bizimMaliyet   = (bedavaAdet !== null && birimFiyat !== null) ? bedavaAdet * birimFiyat * oran : null;
+    const migrosMaliyeti = (bedavaAdet !== null && birimFiyat !== null) ? bedavaAdet * birimFiyat * (1 - oran) : null;
+
+    return {
+      sku: d.sku,
+      referans: { adet: refAdet, tutar: refTutar, gun: Number(r?.gun || 0), birimFiyat: refBirim },
+      donem:    { adet: donAdet, tutar: donTutar, gun: Number(d.gun || 0), birimFiyat: donBirim },
+      fiyatOrani, sekil, bedavaAdet, birimFiyat, bizimMaliyet, migrosMaliyeti,
+    };
+  });
+
+  const topla = (f) => satirlar.reduce((s, x) => s + (f(x) ?? 0), 0);
+  return {
+    kampanya: {
+      id: kampanya.id, ad: kampanya.ad, tip: kampanya.tip,
+      baslangic: String(kampanya.baslangic).slice(0, 10),
+      bitis: String(kampanya.bitis).slice(0, 10),
+      bedava_maliyet_orani: Number(kampanya.bedava_maliyet_orani),
+      fiyat_bazi: kampanya.fiyat_bazi,
+    },
+    referansDonem: { baslangic: refBas, bitis: refBitis, gun: referansGun },
+    satirlar,
+    toplam: {
+      donemAdet: topla(x => x.donem.adet),
+      donemTutar: topla(x => x.donem.tutar),
+      bedavaAdet: topla(x => x.bedavaAdet),
+      bizimMaliyet: topla(x => x.bizimMaliyet),
+      migrosMaliyeti: topla(x => x.migrosMaliyeti),
+    },
+    // Tespit edilemeyen SKU varsa toplamlar eksiktir — sessizce geçme
+    eksik: satirlar.filter(x => x.bedavaAdet === null).map(x => x.sku),
+  };
+}
+
 function financeRoutes(pool) {
   const router = express.Router();
 
@@ -528,6 +647,58 @@ function financeRoutes(pool) {
   });
 
   // --- Ayarlar ---
+
+  // --- Kampanyalar ---
+  router.get('/kampanyalar', async (req, res) => {
+    try {
+      const r = await pool.query(`SELECT * FROM kampanyalar ORDER BY baslangic DESC`);
+      res.json(r.rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/kampanyalar', async (req, res) => {
+    try {
+      const b = req.body || {};
+      const r = await pool.query(`
+        INSERT INTO kampanyalar (ad, tip, baslangic, bitis, bedava_maliyet_orani,
+                                 fiyat_bazi, raporlama_sekli, skular, notlar)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [b.ad, b.tip || 'bogo', b.baslangic, b.bitis, b.bedava_maliyet_orani,
+         b.fiyat_bazi || 'kdv_haric', b.raporlama_sekli || 'tespit',
+         b.skular && b.skular.length ? b.skular : null, b.notlar || null]);
+      res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.put('/kampanyalar/:id', async (req, res) => {
+    try {
+      const b = req.body || {};
+      const r = await pool.query(`
+        UPDATE kampanyalar SET ad=$1, baslangic=$2, bitis=$3, bedava_maliyet_orani=$4,
+               fiyat_bazi=$5, raporlama_sekli=$6, skular=$7, notlar=$8, aktif=$9
+        WHERE id=$10 RETURNING *`,
+        [b.ad, b.baslangic, b.bitis, b.bedava_maliyet_orani, b.fiyat_bazi,
+         b.raporlama_sekli, b.skular && b.skular.length ? b.skular : null,
+         b.notlar || null, b.aktif !== false, req.params.id]);
+      res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.get('/kampanya-analiz', async (req, res) => {
+    try {
+      const { id, referansGun } = req.query;
+      const k = await pool.query(
+        id ? `SELECT * FROM kampanyalar WHERE id = $1`
+           : `SELECT * FROM kampanyalar WHERE aktif ORDER BY baslangic DESC LIMIT 1`,
+        id ? [id] : []);
+      if (!k.rows.length) return res.status(404).json({ error: 'Kampanya bulunamadı' });
+      res.json(await kampanyaAnaliz(pool, k.rows[0], Number(referansGun) || 14));
+    } catch (e) {
+      console.error('kampanya-analiz hata:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   router.get('/settings', async (req, res) => {
     try { res.json(await getSettings(pool)); }
     catch (e) { res.status(500).json({ error: e.message }); }
