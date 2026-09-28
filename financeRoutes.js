@@ -391,9 +391,17 @@ async function kampanyaAnaliz(pool, kampanya, referansGun = 14) {
     [kampanya.baslangic, referansGun]);
   const { a: refBas, b: refBitis } = refBitisRes.rows[0];
 
-  const [ref, don] = await Promise.all([
+  // Günlük kırılım: Migros'a gidecek raporda tarih tarih dayanak olsun
+  const GUNLUK = AGG
+    .replace('SELECT "SupplierItemNumber" AS sku,', 'SELECT "DateTransaction" AS tarih, "SupplierItemNumber" AS sku,')
+    .replace('GROUP BY 1', 'GROUP BY 1, 2 ORDER BY 1, 2');
+
+  const [ref, don, gunluk, sonVeri] = await Promise.all([
     pool.query(AGG, p(refBas, refBitis)),
     pool.query(AGG, p(kampanya.baslangic, kampanya.bitis)),
+    pool.query(GUNLUK, p(kampanya.baslangic, kampanya.bitis)),
+    pool.query(`SELECT MAX("DateTransaction") AS son FROM gunluk_satis
+                WHERE "DateTransaction" ~ '^\\d{4}-\\d{2}-\\d{2}'`),
   ]);
 
   const refMap = Object.fromEntries(ref.rows.map(r => [r.sku, r]));
@@ -453,6 +461,26 @@ async function kampanyaAnaliz(pool, kampanya, referansGun = 14) {
     };
   });
 
+  // Günlük satırlar — SKU'nun tespit edilen şekline ve referans fiyatına göre
+  const sekilMap = Object.fromEntries(satirlar.map(x => [x.sku, x]));
+  const gunlukSatirlar = gunluk.rows.map(g => {
+    const ust = sekilMap[g.sku];
+    const adet = Number(g.adet || 0), tutar = Number(g.tutar || 0);
+    const bedava = !ust || ust.bedavaAdet === null ? null
+                 : ust.sekil === 'cift_adet' ? adet / 2 : adet;
+    const bf = ust?.birimFiyat ?? null;
+    return {
+      tarih: String(g.tarih).slice(0, 10), sku: g.sku, adet, tutar,
+      bedavaAdet: bedava,
+      anlasilanPay: (bedava !== null && bf !== null) ? bedava * bf * oran : null,
+      otomatikPay:  (bedava !== null && bf !== null && ust) ? bedava * bf * (100 - ust.komisyonOrani) / 100 : null,
+    };
+  });
+
+  // Kampanya dönemi verisi tamamlandı mı — bitmeden Migros'a rapor gitmemeli
+  const sonSatisGunu = sonVeri.rows[0]?.son || null;
+  const tamamlandi = !!sonSatisGunu && sonSatisGunu >= String(kampanya.bitis).slice(0, 10);
+
   const topla = (f) => satirlar.reduce((s, x) => s + (f(x) ?? 0), 0);
   return {
     kampanya: {
@@ -463,7 +491,9 @@ async function kampanyaAnaliz(pool, kampanya, referansGun = 14) {
       fiyat_bazi: kampanya.fiyat_bazi,
     },
     referansDonem: { baslangic: refBas, bitis: refBitis, gun: referansGun },
+    veriDurumu: { sonSatisGunu, tamamlandi },
     satirlar,
+    gunluk: gunlukSatirlar,
     toplam: {
       donemAdet: topla(x => x.donem.adet),
       donemTutar: topla(x => x.donem.tutar),

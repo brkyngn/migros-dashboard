@@ -15,6 +15,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'store-types',      icon: '🏬', label: 'Mağaza Tipi' },
       { id: 'stock-availability', icon: '📍', label: 'Stok Bulunurluğu' },
       { id: 'availability',     icon: '🗺️', label: 'Satış Bulunurluğu' },
+      { id: 'campaign',         icon: '🎁', label: 'Kampanya' },
       { id: 'sales',            icon: '📈', label: 'Satış Performansı' },
       { id: 'stock-alerts',     icon: '⚠️', label: 'Stok Uyarıları' },
       { id: 'turnover',         icon: '🔄', label: 'Devir Hızı' },

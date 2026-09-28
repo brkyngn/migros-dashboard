@@ -12,6 +12,7 @@ import StockComparison from './pages/StockComparison';
 import StoreTypes from './pages/StoreTypes';
 import Availability from './pages/Availability';
 import StockAvailability from './pages/StockAvailability';
+import Campaign from './pages/Campaign';
 import Expenses from './pages/Expenses';
 import ProfitLoss from './pages/ProfitLoss';
 import FinanceSettings from './pages/FinanceSettings';
@@ -62,6 +63,7 @@ export default function App() {
           {page === 'store-types'      && <StoreTypes />}
           {page === 'availability'     && <Availability />}
           {page === 'stock-availability' && <StockAvailability />}
+          {page === 'campaign'         && <Campaign />}
           {page === 'turnover'      && <TurnoverAnalysis />}
           {page === 'reports'       && <Reports />}
           {page === 'expenses'         && <Expenses />}

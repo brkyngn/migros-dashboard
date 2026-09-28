@@ -6,6 +6,7 @@ const TITLES: Record<string, string> = {
   'store-types': 'Mağaza Tipi',
   availability: 'Satış Bulunurluğu',
   'stock-availability': 'Stok Bulunurluğu',
+  campaign: 'Kampanya Mutabakatı',
   sales: 'Satış Performansı',
   'stock-alerts': 'Stok Uyarıları',
   turnover: 'Devir Hızı',
