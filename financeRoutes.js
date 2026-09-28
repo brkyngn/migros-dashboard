@@ -369,6 +369,9 @@ async function materializeRecurring(pool) {
 //   sadece_odenen  → bedava adet = dönem adedi       (bedavalar raporda yok)
 //   tespit         → birim fiyat oranına bakıp yukarıdakilerden birine karar verir
 async function kampanyaAnaliz(pool, kampanya, referansGun = 14) {
+  // Komisyon oranı, bedava üründen ZATEN üstlendiğimiz payı belirler.
+  const settings = await getSettings(pool);
+  const products = (await pool.query(`SELECT * FROM products`)).rows.map(mapProduct);
   const skuKosul = kampanya.skular && kampanya.skular.length
     ? `AND "SupplierItemNumber" = ANY($3)` : '';
   const p = (a, b) => kampanya.skular && kampanya.skular.length ? [a, b, kampanya.skular] : [a, b];
@@ -420,14 +423,33 @@ async function kampanyaAnaliz(pool, kampanya, referansGun = 14) {
                      : null;
 
     const birimFiyat = refBirim;
-    const bizimMaliyet   = (bedavaAdet !== null && birimFiyat !== null) ? bedavaAdet * birimFiyat * oran : null;
-    const migrosMaliyeti = (bedavaAdet !== null && birimFiyat !== null) ? bedavaAdet * birimFiyat * (1 - oran) : null;
+
+    // Anlaşmaya göre bedava ürünün bize düşmesi GEREKEN payı
+    const anlasilanPay = (bedavaAdet !== null && birimFiyat !== null)
+      ? bedavaAdet * birimFiyat * oran : null;
+    const migrosPayi = (bedavaAdet !== null && birimFiyat !== null)
+      ? bedavaAdet * birimFiyat * (1 - oran) : null;
+
+    // Ciro paylaşımı üzerinden ZATEN üstlendiğimiz pay. Migros bedava ürünü
+    // raporlanan tutara yansıtmadığı için (2 adet, 1 bedeli) o adedin bize
+    // düşecek komisyon payı hiç doğmuyor — yani kayıp doğrudan bizde.
+    const prod = products.find(pr => pr.migros_urun_kodu === d.sku);
+    const komisyonOrani = prod && prod.komisyon_orani_override !== null
+      ? Number(prod.komisyon_orani_override) : Number(settings.komisyon_orani);
+    const bizimPayimiz = (100 - komisyonOrani) / 100;   // ciroda bize kalan oran
+    const otomatikPay = (bedavaAdet !== null && birimFiyat !== null)
+      ? bedavaAdet * birimFiyat * bizimPayimiz : null;
+
+    // Pozitif = fazla üstlenmişiz, Migros'tan alacaklıyız
+    const fark = (otomatikPay !== null && anlasilanPay !== null)
+      ? otomatikPay - anlasilanPay : null;
 
     return {
       sku: d.sku,
       referans: { adet: refAdet, tutar: refTutar, gun: Number(r?.gun || 0), birimFiyat: refBirim },
       donem:    { adet: donAdet, tutar: donTutar, gun: Number(d.gun || 0), birimFiyat: donBirim },
-      fiyatOrani, sekil, bedavaAdet, birimFiyat, bizimMaliyet, migrosMaliyeti,
+      fiyatOrani, sekil, bedavaAdet, birimFiyat,
+      komisyonOrani, anlasilanPay, migrosPayi, otomatikPay, fark,
     };
   });
 
@@ -446,9 +468,15 @@ async function kampanyaAnaliz(pool, kampanya, referansGun = 14) {
       donemAdet: topla(x => x.donem.adet),
       donemTutar: topla(x => x.donem.tutar),
       bedavaAdet: topla(x => x.bedavaAdet),
-      bizimMaliyet: topla(x => x.bizimMaliyet),
-      migrosMaliyeti: topla(x => x.migrosMaliyeti),
+      anlasilanPay: topla(x => x.anlasilanPay),
+      migrosPayi: topla(x => x.migrosPayi),
+      otomatikPay: topla(x => x.otomatikPay),
+      fark: topla(x => x.fark),
     },
+    // fark > 0 ise ciro paylaşımı yüzünden anlaşmadan fazlasını üstlenmişiz
+    yorum: topla(x => x.fark) > 0
+      ? 'Ciro paylaşımı üzerinden anlaşılandan FAZLA üstlenilmiş; fark Migros\'tan alacak.'
+      : 'Ciro paylaşımı anlaşmayla uyumlu ya da lehimize.',
     // Tespit edilemeyen SKU varsa toplamlar eksiktir — sessizce geçme
     eksik: satirlar.filter(x => x.bedavaAdet === null).map(x => x.sku),
   };
