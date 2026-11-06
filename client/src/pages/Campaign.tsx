@@ -91,6 +91,11 @@ export default function Campaign() {
   const k = data.kampanya;
   const t = data.toplam;
   const bitti = data.veriDurumu.tamamlandi;
+  // Rapor kapsamı kampanya bitişini AŞAMAZ. sonSatisGunu veritabanındaki en
+  // son satış günüdür; kampanya bittikten sonra ilerlemeye devam ettiği için
+  // doğrudan yazılırsa "24 Eylül – 5 Kasım" gibi yanlış bir aralık çıkıyordu.
+  const son = data.veriDurumu.sonSatisGunu;
+  const kapsamBitis = bitti || !son ? k.bitis : (son < k.bitis ? son : k.bitis);
   const lehimize = t.fark > 0;
 
   // Günlük satırları tarihe göre grupla (SKU'lar yan yana)
@@ -105,7 +110,7 @@ export default function Campaign() {
       {!bitti && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-amber-900 text-sm no-print">
           <b>⏳ Kampanya devam ediyor.</b> {formatDateTR(k.bitis)} tarihinde bitiyor; son satış
-          verisi <b>{formatDateTR(data.veriDurumu.sonSatisGunu)}</b>. Aşağıdaki rakamlar
+          verisi <b>{formatDateTR(son)}</b>. Aşağıdaki rakamlar
           şu ana kadarki kısmi dönemi kapsar. <b>Migros'a nihai raporu kampanya bittikten
           sonra gönderin</b> — 4 Ekim verisi 5 Ekim sabahı düşecek.
         </div>
@@ -166,7 +171,7 @@ export default function Campaign() {
           <div className="text-sm text-gray-600 mt-1">{k.ad}</div>
           <div className="text-xs text-gray-500 mt-2">
             Kampanya dönemi: <b>{formatDateTR(k.baslangic)} – {formatDateTR(k.bitis)}</b>
-            {' · '}Rapor kapsamı: <b>{formatDateTR(k.baslangic)} – {formatDateTR(data.veriDurumu.sonSatisGunu)}</b>
+            {' · '}Rapor kapsamı: <b>{formatDateTR(k.baslangic)} – {formatDateTR(kapsamBitis)}</b>
             {!bitti && <span className="text-amber-700 font-bold"> · ARA RAPOR (kampanya devam ediyor)</span>}
           </div>
         </div>
