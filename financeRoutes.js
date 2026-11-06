@@ -479,14 +479,14 @@ async function kampanyaAnaliz(pool, kampanya, referansGun = 14) {
 
   // Kampanya dönemi verisi tamamlandı mı — bitmeden Migros'a rapor gitmemeli
   const sonSatisGunu = sonVeri.rows[0]?.son || null;
-  const tamamlandi = !!sonSatisGunu && sonSatisGunu >= String(kampanya.bitis).slice(0, 10);
+  const tamamlandi = !!sonSatisGunu && sonSatisGunu >= kampanya.bitis;
 
   const topla = (f) => satirlar.reduce((s, x) => s + (f(x) ?? 0), 0);
   return {
     kampanya: {
       id: kampanya.id, ad: kampanya.ad, tip: kampanya.tip,
-      baslangic: String(kampanya.baslangic).slice(0, 10),
-      bitis: String(kampanya.bitis).slice(0, 10),
+      baslangic: kampanya.baslangic,
+      bitis: kampanya.bitis,
       bedava_maliyet_orani: Number(kampanya.bedava_maliyet_orani),
       fiyat_bazi: kampanya.fiyat_bazi,
     },
@@ -709,7 +709,7 @@ function financeRoutes(pool) {
   // --- Kampanyalar ---
   router.get('/kampanyalar', async (req, res) => {
     try {
-      const r = await pool.query(`SELECT * FROM kampanyalar ORDER BY baslangic DESC`);
+      const r = await pool.query(`SELECT id, ad, tip, baslangic::text AS baslangic, bitis::text AS bitis, bedava_maliyet_orani, fiyat_bazi, raporlama_sekli, skular, notlar, aktif, created_at FROM kampanyalar ORDER BY baslangic DESC`);
       res.json(r.rows);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -720,7 +720,7 @@ function financeRoutes(pool) {
       const r = await pool.query(`
         INSERT INTO kampanyalar (ad, tip, baslangic, bitis, bedava_maliyet_orani,
                                  fiyat_bazi, raporlama_sekli, skular, notlar)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, ad, tip, baslangic::text AS baslangic, bitis::text AS bitis, bedava_maliyet_orani, fiyat_bazi, raporlama_sekli, skular, notlar, aktif, created_at`,
         [b.ad, b.tip || 'bogo', b.baslangic, b.bitis, b.bedava_maliyet_orani,
          b.fiyat_bazi || 'kdv_haric', b.raporlama_sekli || 'tespit',
          b.skular && b.skular.length ? b.skular : null, b.notlar || null]);
@@ -734,7 +734,7 @@ function financeRoutes(pool) {
       const r = await pool.query(`
         UPDATE kampanyalar SET ad=$1, baslangic=$2, bitis=$3, bedava_maliyet_orani=$4,
                fiyat_bazi=$5, raporlama_sekli=$6, skular=$7, notlar=$8, aktif=$9
-        WHERE id=$10 RETURNING *`,
+        WHERE id=$10 RETURNING id, ad, tip, baslangic::text AS baslangic, bitis::text AS bitis, bedava_maliyet_orani, fiyat_bazi, raporlama_sekli, skular, notlar, aktif, created_at`,
         [b.ad, b.baslangic, b.bitis, b.bedava_maliyet_orani, b.fiyat_bazi,
          b.raporlama_sekli, b.skular && b.skular.length ? b.skular : null,
          b.notlar || null, b.aktif !== false, req.params.id]);
@@ -746,8 +746,8 @@ function financeRoutes(pool) {
     try {
       const { id, referansGun } = req.query;
       const k = await pool.query(
-        id ? `SELECT * FROM kampanyalar WHERE id = $1`
-           : `SELECT * FROM kampanyalar WHERE aktif ORDER BY baslangic DESC LIMIT 1`,
+        id ? `SELECT id, ad, tip, baslangic::text AS baslangic, bitis::text AS bitis, bedava_maliyet_orani, fiyat_bazi, raporlama_sekli, skular, notlar, aktif, created_at FROM kampanyalar WHERE id = $1`
+           : `SELECT id, ad, tip, baslangic::text AS baslangic, bitis::text AS bitis, bedava_maliyet_orani, fiyat_bazi, raporlama_sekli, skular, notlar, aktif, created_at FROM kampanyalar WHERE aktif ORDER BY baslangic DESC LIMIT 1`,
         id ? [id] : []);
       if (!k.rows.length) return res.status(404).json({ error: 'Kampanya bulunamadı' });
       res.json(await kampanyaAnaliz(pool, k.rows[0], Number(referansGun) || 14));
